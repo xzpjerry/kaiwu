@@ -15,12 +15,16 @@ type nvidiaSMILog struct {
 }
 
 type nvidiaSMIG struct {
-	ProductName string `xml:"product_name"`
-	FBMemory    struct {
+	ProductName    string `xml:"product_name"`
+	MemBusWidth    string `xml:"memory_bus_width"`
+	FBMemory       struct {
 		Total string `xml:"total"`
 		Used  string `xml:"used"`
 		Free  string `xml:"free"`
 	} `xml:"fb_memory_usage"`
+	MaxClocks struct {
+		MemClock string `xml:"mem_clock"`
+	} `xml:"max_clocks"`
 }
 
 // detectNVIDIA detects NVIDIA GPUs using nvidia-smi XML output + CSV for compute_cap.
@@ -65,12 +69,42 @@ func detectNVIDIA() ([]GPUInfo, error) {
 			VRAMFree_MB:      vramFree,
 			ComputeCap:       cc,
 			CUDADriver:       smiLog.CUDAVersion,
-			MemBandwidth_GBs: estimateBandwidth(strings.TrimSpace(g.ProductName)),
+			MemBandwidth_GBs: calcBandwidth(g, strings.TrimSpace(g.ProductName)),
 			IsBlackwell:      isBlackwell,
 		})
 	}
 
 	return gpus, nil
+}
+
+// calcBandwidth calculates memory bandwidth from XML fields (bus width + max clock).
+// Falls back to estimateBandwidth() for virtualized environments or old drivers.
+func calcBandwidth(g nvidiaSMIG, name string) float64 {
+	// Parse bus width: "192 bit" → 192
+	busWidth := 0
+	bwStr := strings.TrimSpace(g.MemBusWidth)
+	bwStr = strings.TrimSuffix(bwStr, " bit")
+	bwStr = strings.TrimSpace(bwStr)
+	if v, err := strconv.Atoi(bwStr); err == nil && v > 0 {
+		busWidth = v
+	}
+
+	// Parse max mem clock: "7501 MHz" → 7501
+	maxClockMHz := 0
+	clkStr := strings.TrimSpace(g.MaxClocks.MemClock)
+	clkStr = strings.TrimSuffix(clkStr, " MHz")
+	clkStr = strings.TrimSpace(clkStr)
+	if v, err := strconv.Atoi(clkStr); err == nil && v > 0 {
+		maxClockMHz = v
+	}
+
+	if busWidth > 0 && maxClockMHz > 0 {
+		// bandwidth (GB/s) = bus_width_bits/8 * freq_MHz * 2(DDR) / 1000
+		return float64(busWidth) / 8 * float64(maxClockMHz) * 2 / 1000
+	}
+
+	// Fallback: name-based estimate (virtualized envs, old drivers)
+	return estimateBandwidth(name)
 }
 
 // queryComputeCaps reads compute capability via CSV (simple, stable format for this one field)
