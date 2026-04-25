@@ -420,10 +420,10 @@ func runModel(modelName string, fast, bench bool, ctxSize int, reset bool, llama
 
 	// [4/6] OOM preflight check
 	fmt.Printf("\n[4/6] Preflight check...\n")
-	// iso3: static check (marker file + SM>=80), no runtime --help detection
-	sm := hw.SMVersion()
-	if profile.HasIsoQuant && !engine.ShouldUseIso3(binaryPath, sm) {
-		fmt.Printf("      iso3 不可用（SM%d 或非 turboquant binary），回退到 q8_0/q4_0\n", sm)
+	// iso3: static check (marker file + all GPUs SM>=80), no runtime --help detection
+	caps := hw.ClusterCaps()
+	if profile.HasIsoQuant && !engine.ShouldUseIso3(binaryPath, caps.MinSM) {
+		fmt.Printf("      iso3 不可用（MinSM%d 或非 turboquant binary），回退到 q8_0/q4_0\n", caps.MinSM)
 		profile.HasIsoQuant = false
 	}
 	if err := engine.PreflightCheck(profile, hw); err != nil {

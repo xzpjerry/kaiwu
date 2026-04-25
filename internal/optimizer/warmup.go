@@ -285,9 +285,9 @@ func Warmup(profile *model.DeployProfile, binaryPath, modelPath string, hw *hard
 
 	// --- Phase 2: ubatch 探测 ---
 	// 低带宽卡（< 200 GB/s）只测 128，避免大 ubatch 加剧带宽瓶颈
-	// 高带宽卡测 128 和 512，选速度快的
+	// 用 ClusterCaps.MinBandwidth：任何一张卡带宽低就限制 ubatch
 	ubatchCandidates := []int{128, 512}
-	if bw := hw.PrimaryGPU(); bw != nil && bw.MemBandwidth_GBs > 0 && bw.MemBandwidth_GBs < 200 {
+	if minBW := hw.ClusterCaps().MinBandwidth; minBW > 0 && minBW < 200 {
 		ubatchCandidates = []int{128}
 	}
 	var ubBestTPS float64

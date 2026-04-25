@@ -88,15 +88,19 @@ func Probe() (*HardwareProbe, error) {
 	return probe, nil
 }
 
-// PrimaryGPU returns the first GPU (highest VRAM)
+// PrimaryGPU returns the strongest GPU (highest bandwidth, then VRAM, then SM).
+// Used for display/logging only — capability decisions use ClusterCaps().
 func (p *HardwareProbe) PrimaryGPU() *GPUInfo {
 	if len(p.GPUs) == 0 {
 		return nil
 	}
 	primary := &p.GPUs[0]
 	for i := range p.GPUs {
-		if p.GPUs[i].VRAM_MB > primary.VRAM_MB {
-			primary = &p.GPUs[i]
+		g := &p.GPUs[i]
+		if g.MemBandwidth_GBs > primary.MemBandwidth_GBs {
+			primary = g
+		} else if g.MemBandwidth_GBs == primary.MemBandwidth_GBs && g.VRAM_MB > primary.VRAM_MB {
+			primary = g
 		}
 	}
 	return primary
@@ -117,9 +121,14 @@ func (p *HardwareProbe) GPUCount() int {
 }
 
 // SMVersion returns the SM version as an integer (e.g. "7.5" → 75, "12.0" → 120).
-// Returns 0 if unknown.
+// Returns 0 if unknown. Uses PrimaryGPU — for multi-GPU min SM, use ClusterCaps().
 func (p *HardwareProbe) SMVersion() int {
 	gpu := p.PrimaryGPU()
+	return gpuSMVersion(gpu)
+}
+
+// gpuSMVersion parses SM version from a single GPU's ComputeCap string.
+func gpuSMVersion(gpu *GPUInfo) int {
 	if gpu == nil || gpu.ComputeCap == "" {
 		return 0
 	}
@@ -138,10 +147,67 @@ func (p *HardwareProbe) SMVersion() int {
 	return major*10 + minor
 }
 
-// SupportsFlashAttn returns true if the primary GPU supports Flash Attention (SM75+).
-// Turing (SM75, e.g. RTX 2080) supports FA with modest gains; Ampere+ gets full benefit.
+// ClusterCapabilities aggregates multi-GPU capabilities.
+// Resources (VRAM, bandwidth) are summed; capabilities (SM, iso3, FA) take the intersection.
+type ClusterCapabilities struct {
+	TotalVRAM_MB   int
+	TotalBandwidth float64
+	MinSM          int      // lowest SM across all GPUs
+	MinBandwidth   float64  // lowest bandwidth across all GPUs
+	SupportsIso3   bool     // all GPUs SM >= 80
+	SupportsFA     bool     // all GPUs SM >= 75
+	HasBlackwell   bool     // any GPU is Blackwell (SM120+)
+	Primary        *GPUInfo // strongest GPU (for display)
+}
+
+// ClusterCaps computes aggregated capabilities across all GPUs.
+func (p *HardwareProbe) ClusterCaps() ClusterCapabilities {
+	caps := ClusterCapabilities{
+		MinSM:        999,
+		MinBandwidth: 1e9,
+		SupportsIso3: true,
+		SupportsFA:   true,
+	}
+
+	if len(p.GPUs) == 0 {
+		caps.MinSM = 0
+		caps.MinBandwidth = 0
+		caps.SupportsIso3 = false
+		caps.SupportsFA = false
+		return caps
+	}
+
+	for i := range p.GPUs {
+		g := &p.GPUs[i]
+		caps.TotalVRAM_MB += g.VRAM_MB
+		caps.TotalBandwidth += g.MemBandwidth_GBs
+
+		sm := gpuSMVersion(g)
+		if sm < caps.MinSM {
+			caps.MinSM = sm
+		}
+		if g.MemBandwidth_GBs < caps.MinBandwidth {
+			caps.MinBandwidth = g.MemBandwidth_GBs
+		}
+		if sm < 80 {
+			caps.SupportsIso3 = false
+		}
+		if sm < 75 {
+			caps.SupportsFA = false
+		}
+		if g.IsBlackwell {
+			caps.HasBlackwell = true
+		}
+	}
+
+	caps.Primary = p.PrimaryGPU()
+	return caps
+}
+
+// SupportsFlashAttn returns true if ALL GPUs support Flash Attention (SM75+).
+// Uses ClusterCaps intersection — one weak card disables FA for the whole cluster.
 func (p *HardwareProbe) SupportsFlashAttn() bool {
-	return p.SMVersion() >= 75
+	return p.ClusterCaps().SupportsFA
 }
 
 // HasNVLink returns true if NVLink is detected between GPUs.
