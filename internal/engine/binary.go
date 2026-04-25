@@ -284,6 +284,21 @@ func extractFromTarGz(archivePath, destPath string) error {
 	return fmt.Errorf("llama-server not found in archive")
 }
 
+// ShouldUseIso3 determines iso3 support via static checks — no runtime detection.
+// Two conditions: (1) SM >= 80 (Ampere+), (2) binary is turboquant build (marker file exists).
+// This replaces the old DetectIso3Support which ran --help and was prone to JIT timeout on SM120.
+func ShouldUseIso3(binaryPath string, sm int) bool {
+	if sm < 80 {
+		return false
+	}
+	marker := binaryPath + ".kaiwu"
+	data, err := os.ReadFile(marker)
+	if err != nil {
+		return false
+	}
+	return strings.Contains(string(data), "turboquant-iso3")
+}
+
 // ValidateCUDAVersion checks for known CUDA driver issues
 func ValidateCUDAVersion(hw *hardware.HardwareProbe) error {
 	gpu := hw.PrimaryGPU()

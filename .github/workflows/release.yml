@@ -81,6 +81,8 @@ jobs:
           mkdir -p package-win
           cp artifacts/kaiwu-windows-amd64/kaiwu.exe package-win/
           cp artifacts/llama-server-windows/* package-win/
+          # Create turboquant marker for static iso3 detection
+          echo "turboquant-iso3" > package-win/llama-server-cuda.exe.kaiwu
           cd package-win && zip -r ../kaiwu-windows-amd64.zip . && cd ..
 
       - name: Package Linux release
@@ -88,6 +90,8 @@ jobs:
           mkdir -p package-linux
           cp artifacts/kaiwu-linux-amd64/kaiwu package-linux/
           cp artifacts/llama-server-linux/* package-linux/
+          # Create turboquant marker for static iso3 detection
+          echo "turboquant-iso3" > package-linux/llama-server-cuda.kaiwu
           chmod +x package-linux/kaiwu package-linux/llama-server-cuda
           cd package-linux && tar -czf ../kaiwu-linux-amd64.tar.gz . && cd ..
 

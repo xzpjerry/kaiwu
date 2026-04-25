@@ -420,13 +420,10 @@ func runModel(modelName string, fast, bench bool, ctxSize int, reset bool, llama
 
 	// [4/6] OOM preflight check
 	fmt.Printf("\n[4/6] Preflight check...\n")
-	// iso3 检测必须在 warmup 之前，否则 warmup 会用 iso3 参数启动失败
+	// iso3: static check (marker file + SM>=80), no runtime --help detection
 	sm := hw.SMVersion()
-	if sm >= 120 {
-		fmt.Printf("      ⚠  RTX 50 系首次启动需要 JIT 编译 (~30s)，请稍候...\n")
-	}
-	if profile.HasIsoQuant && !engine.DetectIso3SupportForSM(binaryPath, sm) {
-		fmt.Printf("      llama-server 不支持 iso3，回退到 q8_0/q4_0\n")
+	if profile.HasIsoQuant && !engine.ShouldUseIso3(binaryPath, sm) {
+		fmt.Printf("      iso3 不可用（SM%d 或非 turboquant binary），回退到 q8_0/q4_0\n", sm)
 		profile.HasIsoQuant = false
 	}
 	if err := engine.PreflightCheck(profile, hw); err != nil {

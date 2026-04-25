@@ -164,6 +164,11 @@ CPU-only inference is supported but not the focus.
 
 ## Changelog
 
+### v0.1.10 — iso3 detection rewrite (static, no more timeouts)
+- Replaced runtime iso3 detection (`--help` + timeout) with static check: marker file + SM >= 80. Eliminates all JIT timeout failures on RTX 50-series (SM120) and CUDA 13.x
+- CI now ships a `.kaiwu` marker file alongside the turboquant binary
+- Removed `DetectIso3Support`, `DetectIso3SupportForSM`, and all iso3 cache logic
+
 ### v0.1.9 — Multi-GPU tensor split optimization
 - Multi-GPU tensor split now weighted by VRAM × bandwidth instead of VRAM alone. Heterogeneous setups (e.g. 3090+4090+5060) get smarter layer distribution — weak cards receive fewer layers so they don't bottleneck the system
 - Multi-GPU display now shows each card individually with VRAM, bandwidth, and computed split ratio
@@ -374,6 +379,11 @@ kaiwu inject
 | `version` | 显示版本号 |
 
 ## 版本历史
+
+### v0.1.10 — iso3 检测重写（静态判断，不再超时）
+- iso3 检测从运行时（`--help` + 超时）改为静态判断：标记文件 + SM >= 80。彻底消除 RTX 50 系（SM120）和 CUDA 13.x 下的 JIT 超时误判
+- CI 打包时在 turboquant binary 旁放 `.kaiwu` 标记文件
+- 删除 `DetectIso3Support`、`DetectIso3SupportForSM` 及所有 iso3 缓存逻辑
 
 ### v0.1.9 — 多卡 tensor split 优化
 - 多卡 tensor split 从纯按显存比例改为按 显存×带宽 加权。异构多卡（如 3090+4090+5060）分配更合理——弱卡少分层，不拖慢整体

@@ -1,7 +1,6 @@
 package engine
 
 import (
-	"context"
 	"fmt"
 	"net"
 	"os"
@@ -390,79 +389,6 @@ func shouldMmapEngine(hw *hardware.HardwareProbe, profile *model.DeployProfile) 
 	freeMB := float64(hw.RAM.Free_MB)
 	modelMB := profile.Size_GB * 1024
 	return modelMB < freeMB*0.7
-}
-
-// DetectIso3Support 检测 llama-server 是否支持 iso3 (exported for use in warmup)
-//
-// 策略：
-//   - SM < 75：不支持 CUDA iso3，直接返回 false（无需运行 --help）
-//   - SM 75-119：直接运行 --help，15s 超时（无 JIT 编译延迟）
-//   - SM 120+（Blackwell）：60s 超时，首次运行需要 PTX JIT 编译
-//
-// 结果缓存到 ~/.kaiwu/iso3_support_<mtime>.txt，避免每次重复检测
-func DetectIso3Support(binaryPath string) bool {
-	return DetectIso3SupportForSM(binaryPath, 0)
-}
-
-// DetectIso3SupportForSM is like DetectIso3Support but uses SM version to set timeout.
-func DetectIso3SupportForSM(binaryPath string, sm int) bool {
-	// SM < 75: no CUDA iso3 support, skip --help entirely
-	if sm > 0 && sm < 75 {
-		return false
-	}
-
-	// Fast path: check cache first
-	if cached, ok := loadIso3Cache(binaryPath); ok {
-		return cached
-	}
-
-	// Blackwell (SM120+) needs longer timeout for PTX JIT compilation
-	timeout := 15 * time.Second
-	if sm >= 120 {
-		timeout = 60 * time.Second
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
-	defer cancel()
-	out, err := exec.CommandContext(ctx, binaryPath, "--help").CombinedOutput()
-	// --help 可能返回非零退出码，只要有输出就检查内容
-	if len(out) == 0 && err != nil {
-		saveIso3Cache(binaryPath, false)
-		return false
-	}
-	result := strings.Contains(string(out), "iso3")
-	saveIso3Cache(binaryPath, result)
-	return result
-}
-
-// loadIso3Cache reads cached iso3 support result for a binary.
-// Cache key is the binary's modification time (cheap proxy for content hash).
-func loadIso3Cache(binaryPath string) (bool, bool) {
-	info, err := os.Stat(binaryPath)
-	if err != nil {
-		return false, false
-	}
-	cacheKey := fmt.Sprintf("%d", info.ModTime().Unix())
-	cachePath := filepath.Join(config.Dir(), "iso3_support_"+cacheKey+".txt")
-	data, err := os.ReadFile(cachePath)
-	if err != nil {
-		return false, false
-	}
-	return strings.TrimSpace(string(data)) == "1", true
-}
-
-func saveIso3Cache(binaryPath string, supported bool) {
-	info, err := os.Stat(binaryPath)
-	if err != nil {
-		return
-	}
-	cacheKey := fmt.Sprintf("%d", info.ModTime().Unix())
-	cachePath := filepath.Join(config.Dir(), "iso3_support_"+cacheKey+".txt")
-	val := "0"
-	if supported {
-		val = "1"
-	}
-	os.WriteFile(cachePath, []byte(val), 0644)
 }
 
 // buildOOMError 构建详细的 OOM 错误信息，建议根据实际情况动态生成
