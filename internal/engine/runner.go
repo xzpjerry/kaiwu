@@ -30,9 +30,9 @@ type RunningEngine struct {
 // Start starts llama-server with probe-and-retry strategy.
 // 探测式启动：尝试最优 ctx → OOM 就减半重试 → 最多 3 次。
 func Start(profile *model.DeployProfile, binaryPath, modelPath string, hw *hardware.HardwareProbe) (*RunningEngine, error) {
-	// 运行时探测 llama-server 是否支持 iso3
-	if profile.HasIsoQuant && !DetectIso3Support(binaryPath) {
-		fmt.Println("      llama-server 不支持 iso3 (或首次 JIT 编译超时)，回退到 q8_0/q4_0")
+	// 运行时探测 llama-server 是否支持 iso3（带 SM 版本，SM<75 直接跳过）
+	if profile.HasIsoQuant && !DetectIso3SupportForSM(binaryPath, hw.SMVersion()) {
+		fmt.Println("      llama-server 不支持 iso3，回退到 q8_0/q4_0")
 		profile.HasIsoQuant = false
 	}
 
@@ -333,7 +333,12 @@ func buildArgs(profile *model.DeployProfile, modelPath string, port int, hw *har
 		args = append(args, "--ubatch-size", "512")
 	} else {
 		args = append(args, "--batch-size", "512")
-		args = append(args, "--ubatch-size", "512")
+		// 小模型（<2GB）用小 ubatch，避免 --kv-unified 预分配过多 VRAM
+		ubatch := 512
+		if profile.Size_GB < 2.0 {
+			ubatch = 128
+		}
+		args = append(args, "--ubatch-size", strconv.Itoa(ubatch))
 	}
 
 	return args
@@ -387,20 +392,79 @@ func shouldMmapEngine(hw *hardware.HardwareProbe, profile *model.DeployProfile) 
 }
 
 // DetectIso3Support 检测 llama-server 是否支持 iso3 (exported for use in warmup)
+//
+// 策略：
+//   - SM < 75：不支持 CUDA iso3，直接返回 false（无需运行 --help）
+//   - SM 75-119：直接运行 --help，15s 超时（无 JIT 编译延迟）
+//   - SM 120+（Blackwell）：60s 超时，首次运行需要 PTX JIT 编译
+//
+// 结果缓存到 ~/.kaiwu/iso3_support_<mtime>.txt，避免每次重复检测
 func DetectIso3Support(binaryPath string) bool {
-	// Blackwell (SM120/SM121) and newer architectures need PTX JIT compilation
-	// on first run, which can take 30-60 seconds. Use longer timeout.
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	return DetectIso3SupportForSM(binaryPath, 0)
+}
+
+// DetectIso3SupportForSM is like DetectIso3Support but uses SM version to set timeout.
+func DetectIso3SupportForSM(binaryPath string, sm int) bool {
+	// SM < 75: no CUDA iso3 support, skip --help entirely
+	if sm > 0 && sm < 75 {
+		return false
+	}
+
+	// Fast path: check cache first
+	if cached, ok := loadIso3Cache(binaryPath); ok {
+		return cached
+	}
+
+	// Blackwell (SM120+) needs longer timeout for PTX JIT compilation
+	timeout := 15 * time.Second
+	if sm >= 120 {
+		timeout = 60 * time.Second
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	out, err := exec.CommandContext(ctx, binaryPath, "--help").CombinedOutput()
 	// --help 可能返回非零退出码，只要有输出就检查内容
 	if len(out) == 0 && err != nil {
+		saveIso3Cache(binaryPath, false)
 		return false
 	}
-	return strings.Contains(string(out), "iso3")
+	result := strings.Contains(string(out), "iso3")
+	saveIso3Cache(binaryPath, result)
+	return result
 }
 
-// buildOOMError 构建详细的 OOM 错误信息
+// loadIso3Cache reads cached iso3 support result for a binary.
+// Cache key is the binary's modification time (cheap proxy for content hash).
+func loadIso3Cache(binaryPath string) (bool, bool) {
+	info, err := os.Stat(binaryPath)
+	if err != nil {
+		return false, false
+	}
+	cacheKey := fmt.Sprintf("%d", info.ModTime().Unix())
+	cachePath := filepath.Join(config.Dir(), "iso3_support_"+cacheKey+".txt")
+	data, err := os.ReadFile(cachePath)
+	if err != nil {
+		return false, false
+	}
+	return strings.TrimSpace(string(data)) == "1", true
+}
+
+func saveIso3Cache(binaryPath string, supported bool) {
+	info, err := os.Stat(binaryPath)
+	if err != nil {
+		return
+	}
+	cacheKey := fmt.Sprintf("%d", info.ModTime().Unix())
+	cachePath := filepath.Join(config.Dir(), "iso3_support_"+cacheKey+".txt")
+	val := "0"
+	if supported {
+		val = "1"
+	}
+	os.WriteFile(cachePath, []byte(val), 0644)
+}
+
+// buildOOMError 构建详细的 OOM 错误信息，建议根据实际情况动态生成
 func buildOOMError(profile *model.DeployProfile, hw *hardware.HardwareProbe, attempts int) error {
 	vramMB := hw.TotalVRAM_MB()
 	modelMB := int(profile.Size_GB * 1024)
@@ -424,10 +488,21 @@ func buildOOMError(profile *model.DeployProfile, hw *hardware.HardwareProbe, att
 	}
 
 	msg += "  建议:\n"
-	msg += "  1. 选择更小的量化 (Q2_K)\n"
-	msg += "  2. 选择更小的模型\n"
-	if profile.Mode != "moe_offload" {
-		msg += "  3. 使用 MoE offload 模型（experts 放 CPU RAM）"
+	vramGB := float64(vramMB) / 1024.0
+
+	if profile.Size_GB > vramGB*0.7 {
+		// 模型本身偏大
+		msg += "  1. 选择更小的量化 (Q4_K_M 或 Q2_K)\n"
+		if profile.Arch != "moe" && profile.Size_GB > 10 {
+			// dense 大模型，建议换 MoE 架构
+			msg += "  2. 换用 MoE 架构模型（如 Qwen3-30B-A3B），expert 层自动放 CPU RAM\n"
+		} else {
+			msg += "  2. 选择更小的模型\n"
+		}
+	} else {
+		// 模型小但还是 OOM → 参数配置问题
+		msg += "  1. 运行 kaiwu run " + profile.ModelID + " --reset 重新探测参数\n"
+		msg += "  2. 模型较小但仍 OOM，可能是参数配置问题，请升级到最新版本\n"
 	}
 
 	return fmt.Errorf("%s", msg)
