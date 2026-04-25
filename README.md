@@ -136,7 +136,7 @@ kaiwu inject
 | ubatch size | Benchmarks 128 vs 512; picks the faster one |
 | Thread count | 2 for full-GPU, physical_cores/2 for MoE offload |
 | mlock | Enabled when RAM headroom > 30% |
-| GPU tensor split | Proportional to VRAM when multiple GPUs detected |
+| GPU tensor split | Weighted by VRAM × bandwidth when multiple GPUs detected |
 
 ## Requirements
 
@@ -163,6 +163,12 @@ CPU-only inference is supported but not the focus.
 | `version` | Show version. |
 
 ## Changelog
+
+### v0.1.9 — Multi-GPU tensor split optimization
+- Multi-GPU tensor split now weighted by VRAM × bandwidth instead of VRAM alone. Heterogeneous setups (e.g. 3090+4090+5060) get smarter layer distribution — weak cards receive fewer layers so they don't bottleneck the system
+- Multi-GPU display now shows each card individually with VRAM, bandwidth, and computed split ratio
+- `--fit on` now applied unconditionally for both full_gpu and moe_offload modes (was missing for moe_offload in fallback path)
+- Accel display shows tensor split ratio for multi-GPU without NVLink
 
 ### v0.1.8 — MoE warmup no speed threshold
 - MoE offload warmup no longer uses a speed threshold. Speed is PCIe-bandwidth-limited, not context-limited — dropping ctx from 128K to 4K only improves speed ~20-30%, never enough to cross any threshold. Warmup now finds the largest ctx that fits in VRAM and reports whatever speed the hardware delivers
@@ -341,7 +347,7 @@ kaiwu inject
 | ubatch 大小 | 实测 128 vs 512，取快的 |
 | 线程数 | 全 GPU 用 2，MoE offload 用物理核 /2 |
 | mlock | 内存余量 > 30% 时自动开，防止模型被换出到磁盘 |
-| 多卡分配 | 按显存比例自动切分 |
+| 多卡分配 | 按显存×带宽加权自动切分，弱卡少分活 |
 
 ## 硬件要求
 
@@ -368,6 +374,12 @@ kaiwu inject
 | `version` | 显示版本号 |
 
 ## 版本历史
+
+### v0.1.9 — 多卡 tensor split 优化
+- 多卡 tensor split 从纯按显存比例改为按 显存×带宽 加权。异构多卡（如 3090+4090+5060）分配更合理——弱卡少分层，不拖慢整体
+- 多卡显示改为逐卡列出（型号、显存、带宽、分配比例）
+- `--fit on` 现在对 full_gpu 和 moe_offload 两种模式都无条件启用（之前 fallback 路径的 moe_offload 漏了）
+- 加速特性显示新增 tensor split 比例（多卡无 NVLink 时）
 
 ### v0.1.8 — MoE warmup 不再限速
 - MoE offload warmup 不再使用速度阈值。MoE 的速度瓶颈是 PCIe 带宽，不是 ctx 大小——ctx 从 128K 降到 4K 速度只提升 20-30%，永远到不了任何阈值。现在直接找显存能装下的最大 ctx，速度是多少就是多少

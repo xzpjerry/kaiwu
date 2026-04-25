@@ -316,8 +316,14 @@ func runModel(modelName string, fast, bench bool, ctxSize int, reset bool, llama
 	gpu := hw.PrimaryGPU()
 	if gpu != nil {
 		if hw.GPUCount() > 1 {
-			fmt.Printf("      GPU: %s × %d (SM%s, %d MB VRAM each, %.0f GB/s)\n",
-				gpu.Name, hw.GPUCount(), strings.ReplaceAll(gpu.ComputeCap, ".", ""), gpu.VRAM_MB, gpu.MemBandwidth_GBs)
+			fmt.Printf("      GPU: %d cards, %d MB total VRAM\n", hw.GPUCount(), hw.TotalVRAM_MB())
+			for i, g := range hw.GPUs {
+				fmt.Printf("        #%d %s (SM%s, %d MB, %.0f GB/s)\n",
+					i, g.Name, strings.ReplaceAll(g.ComputeCap, ".", ""), g.VRAM_MB, g.MemBandwidth_GBs)
+			}
+			if ts := hw.TensorSplitArg(); ts != "" {
+				fmt.Printf("      Split: %s (VRAM×BW weighted)\n", ts)
+			}
 		} else {
 			fmt.Printf("      GPU: %s (SM%s, %d MB VRAM, %.0f GB/s)\n",
 				gpu.Name, strings.ReplaceAll(gpu.ComputeCap, ".", ""), gpu.VRAM_MB, gpu.MemBandwidth_GBs)
@@ -377,6 +383,8 @@ func runModel(modelName string, fast, bench bool, ctxSize int, reset bool, llama
 	}
 	if hw.GPUCount() > 1 && hw.HasNVLink() {
 		accel = append(accel, "NVLink")
+	} else if hw.GPUCount() > 1 {
+		accel = append(accel, fmt.Sprintf("Tensor Split (%s)", hw.TensorSplitArg()))
 	}
 	if profile.IsHybrid {
 		accel = append(accel, "SWA-Full (hybrid arch)")

@@ -153,6 +153,41 @@ func (p *HardwareProbe) HasNVLink() bool {
 	return detectNVLink()
 }
 
+// TensorSplitArg returns the --tensor-split value for multi-GPU setups.
+// Weights are VRAM × bandwidth so that weaker cards (low VRAM or low bandwidth)
+// get fewer layers and don't bottleneck the whole system.
+// Returns "" for single-GPU setups (no split needed).
+func (p *HardwareProbe) TensorSplitArg() string {
+	if len(p.GPUs) < 2 {
+		return ""
+	}
+
+	weights := make([]float64, len(p.GPUs))
+	for i, g := range p.GPUs {
+		bw := g.MemBandwidth_GBs
+		if bw <= 0 {
+			bw = 200 // conservative fallback
+		}
+		weights[i] = float64(g.VRAM_MB) * bw
+	}
+
+	// Normalize to percentages and format
+	total := 0.0
+	for _, w := range weights {
+		total += w
+	}
+	if total == 0 {
+		return ""
+	}
+
+	parts := make([]string, len(weights))
+	for i, w := range weights {
+		pct := w / total * 100
+		parts[i] = fmt.Sprintf("%.0f", pct)
+	}
+	return strings.Join(parts, ",")
+}
+
 // Fingerprint returns a unique hardware fingerprint for profile caching
 // Format: "sm89_24576mb_ddr5" (single GPU) or "sm89_2x24576mb_ddr5" (multi GPU)
 func (p *HardwareProbe) Fingerprint() string {

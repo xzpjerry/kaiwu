@@ -300,9 +300,13 @@ func buildArgs(profile *model.DeployProfile, modelPath string, port int, hw *har
 		args = append(args, "--flash-attn", "on")
 	}
 
-	// Multi-GPU with NVLink: enable direct GPU-to-GPU memory access
-	if hw.GPUCount() > 1 && hw.HasNVLink() {
-		args = append(args, "-sm", "graph")
+	// Multi-GPU: NVLink → graph split mode; otherwise → weighted tensor-split
+	if hw.GPUCount() > 1 {
+		if hw.HasNVLink() {
+			args = append(args, "-sm", "graph")
+		} else if ts := hw.TensorSplitArg(); ts != "" {
+			args = append(args, "--tensor-split", ts)
+		}
 	}
 
 	// Hybrid architecture (DeltaNet/SSM): full SWA KV cache for correct long-context behavior
@@ -321,14 +325,13 @@ func buildArgs(profile *model.DeployProfile, modelPath string, port int, hw *har
 	}
 
 	// MoE offload: keep expert layers on CPU, only attention/shared layers on GPU.
-	// --cpu-moe is more reliable than -ot regex; --fit must be off to avoid
-	// the fitter overriding the CPU placement.
+	// --cpu-moe is more reliable than -ot regex.
+	// --fit on lets llama.cpp handle layer allocation for both modes.
 	if profile.Mode == "moe_offload" {
 		args = append(args, "--cpu-moe")
 		args = append(args, "--batch-size", "4096")
 		args = append(args, "--ubatch-size", "512")
 	} else {
-		args = append(args, "--fit", "on")
 		args = append(args, "--batch-size", "512")
 		// 小模型（<2GB）用小 ubatch，避免 --kv-unified 预分配过多 VRAM
 		ubatch := 512
@@ -337,6 +340,7 @@ func buildArgs(profile *model.DeployProfile, modelPath string, port int, hw *har
 		}
 		args = append(args, "--ubatch-size", strconv.Itoa(ubatch))
 	}
+	args = append(args, "--fit", "on")
 
 	return args
 }

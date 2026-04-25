@@ -399,9 +399,13 @@ func BuildArgs(profile *model.DeployProfile, modelPath string, port int, hw *har
 		args = append(args, "--flash-attn", "on")
 	}
 
-	// Multi-GPU with NVLink: enable direct GPU-to-GPU memory access
-	if hw.GPUCount() > 1 && hw.HasNVLink() {
-		args = append(args, "-sm", "graph")
+	// Multi-GPU: NVLink → graph split mode; otherwise → weighted tensor-split
+	if hw.GPUCount() > 1 {
+		if hw.HasNVLink() {
+			args = append(args, "-sm", "graph")
+		} else if ts := hw.TensorSplitArg(); ts != "" {
+			args = append(args, "--tensor-split", ts)
+		}
 	}
 
 	// Hybrid architecture (DeltaNet/SSM): full SWA KV cache for correct long-context behavior
