@@ -276,9 +276,12 @@ func Warmup(profile *model.DeployProfile, binaryPath, modelPath string, hw *hard
 	}
 
 	// --- Phase 2: ubatch 探测 ---
-	// 实测 128 vs 512，选速度快的。batch 固定 512（和 LM Studio 一致）。
-	// 独立比较：Phase 2 结果总是覆盖 Phase 1（因为 batch size 也可能变了）。
+	// 低带宽卡（< 200 GB/s）只测 128，避免大 ubatch 加剧带宽瓶颈
+	// 高带宽卡测 128 和 512，选速度快的
 	ubatchCandidates := []int{128, 512}
+	if bw := hw.PrimaryGPU(); bw != nil && bw.MemBandwidth_GBs > 0 && bw.MemBandwidth_GBs < 200 {
+		ubatchCandidates = []int{128}
+	}
 	var ubBestTPS float64
 	var ubBestArgs []string
 	var ubBestVRAM int

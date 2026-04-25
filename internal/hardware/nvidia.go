@@ -114,6 +114,7 @@ func detectNVLink() bool {
 func estimateBandwidth(name string) float64 {
 	n := strings.ToLower(name)
 	switch {
+	// RTX 50 series (Blackwell)
 	case strings.Contains(n, "5090"):
 		return 1792.0
 	case strings.Contains(n, "5080"):
@@ -122,13 +123,22 @@ func estimateBandwidth(name string) float64 {
 		return 896.0
 	case strings.Contains(n, "5070"):
 		return 672.0
+	case strings.Contains(n, "5060 ti"):
+		return 448.0
 	case strings.Contains(n, "5060"):
 		return 448.0
+	// RTX 40 series (Ada)
 	case strings.Contains(n, "4090"):
 		return 1008.0
+	case strings.Contains(n, "4080 super"):
+		return 736.0
 	case strings.Contains(n, "4080"):
 		return 717.0
+	case strings.Contains(n, "4070 ti super"):
+		return 672.0
 	case strings.Contains(n, "4070 ti"):
+		return 504.0
+	case strings.Contains(n, "4070 super"):
 		return 504.0
 	case strings.Contains(n, "4070"):
 		return 504.0
@@ -136,16 +146,73 @@ func estimateBandwidth(name string) float64 {
 		return 288.0
 	case strings.Contains(n, "4060"):
 		return 272.0
+	// RTX 30 series (Ampere)
+	case strings.Contains(n, "3090 ti"):
+		return 1008.0
 	case strings.Contains(n, "3090"):
 		return 936.0
+	case strings.Contains(n, "3080 ti"):
+		return 912.0
 	case strings.Contains(n, "3080"):
 		return 760.0
+	case strings.Contains(n, "3070 ti"):
+		return 608.0
+	case strings.Contains(n, "3070"):
+		return 448.0
+	case strings.Contains(n, "3060 ti"):
+		return 448.0
+	case strings.Contains(n, "3060"):
+		return 360.0
+	// RTX 20 series (Turing)
+	case strings.Contains(n, "2080 ti"):
+		return 616.0
+	case strings.Contains(n, "2080 super"):
+		return 496.0
+	case strings.Contains(n, "2080"):
+		return 448.0
+	case strings.Contains(n, "2070 super"):
+		return 448.0
+	case strings.Contains(n, "2070"):
+		return 448.0
+	case strings.Contains(n, "2060 super"):
+		return 448.0
+	case strings.Contains(n, "2060"):
+		return 336.0
+	// GTX 16 series (Turing, no RT cores)
+	case strings.Contains(n, "1660 ti"):
+		return 288.0
+	case strings.Contains(n, "1660 super"):
+		return 336.0
+	case strings.Contains(n, "1660"):
+		return 192.0
+	case strings.Contains(n, "1650 super"):
+		return 192.0
+	case strings.Contains(n, "1650"):
+		return 128.0
+	// GTX 10 series (Pascal)
+	case strings.Contains(n, "1080 ti"):
+		return 484.0
+	case strings.Contains(n, "1080"):
+		return 320.0
+	case strings.Contains(n, "1070 ti"):
+		return 256.0
+	case strings.Contains(n, "1070"):
+		return 256.0
+	case strings.Contains(n, "1060"):
+		return 192.0
+	// Data center
 	case strings.Contains(n, "a100"):
 		return 2039.0
 	case strings.Contains(n, "h100"):
 		return 3350.0
+	case strings.Contains(n, "h200"):
+		return 4800.0
 	case strings.Contains(n, "p40"):
 		return 346.0
+	case strings.Contains(n, "p100"):
+		return 732.0
+	case strings.Contains(n, "v100"):
+		return 900.0
 	default:
 		return 0.0
 	}
