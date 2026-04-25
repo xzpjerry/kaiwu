@@ -141,6 +141,9 @@ kaiwu inject
 ## Requirements
 
 - **GPU**: NVIDIA (CUDA) — 4GB+ VRAM recommended
+- **Driver**: ≥ 550.54 (Windows) / ≥ 550.54 (Linux) — required for CUDA 12.4 runtime bundled with Kaiwu
+  - Check: `nvidia-smi` → look for "Driver Version"
+  - Update at: [nvidia.com/drivers](https://www.nvidia.com/drivers)
 - **OS**: Windows 10/11, Linux (Ubuntu 20.04+)
 - **RAM**: 8GB+ (16GB+ for 30B MoE models)
 - **Model format**: GGUF
@@ -335,6 +338,9 @@ kaiwu inject
 ## 硬件要求
 
 - **显卡**：NVIDIA（CUDA）——建议 4GB+ 显存
+- **驱动**：≥ 550.54——Kaiwu 内置 CUDA 12.4 runtime，需要此版本驱动支持
+  - 查看：`nvidia-smi` → 看 "Driver Version"
+  - 更新：[nvidia.com/drivers](https://www.nvidia.com/drivers)
 - **系统**：Windows 10/11，Linux（Ubuntu 20.04+）
 - **内存**：8GB+（30B MoE 模型建议 16GB+）
 - **模型格式**：GGUF
