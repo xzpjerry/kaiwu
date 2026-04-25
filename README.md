@@ -164,6 +164,10 @@ CPU-only inference is supported but not the focus.
 
 ## Changelog
 
+### v0.1.8 — MoE warmup no speed threshold
+- MoE offload warmup no longer uses a speed threshold. Speed is PCIe-bandwidth-limited, not context-limited — dropping ctx from 128K to 4K only improves speed ~20-30%, never enough to cross any threshold. Warmup now finds the largest ctx that fits in VRAM and reports whatever speed the hardware delivers
+- Warmup output now shows: `ℹ MoE offload · speed limited by PCIe bandwidth, not context size`
+
 ### v0.1.7 — MoE warmup threshold + /responses endpoint
 - MoE offload warmup threshold lowered 18 → 8 tok/s: laptop MoE is PCIe-limited to 13-15 tok/s max; the old threshold caused warmup to always fall back to the smallest ctx even when the model runs fine
 - Proxy now handles `/responses` (without `/v1/` prefix) in addition to `/v1/responses` — fixes 404 errors from newer Cursor and Claude Code clients
@@ -364,6 +368,10 @@ kaiwu inject
 | `version` | 显示版本号 |
 
 ## 版本历史
+
+### v0.1.8 — MoE warmup 不再限速
+- MoE offload warmup 不再使用速度阈值。MoE 的速度瓶颈是 PCIe 带宽，不是 ctx 大小——ctx 从 128K 降到 4K 速度只提升 20-30%，永远到不了任何阈值。现在直接找显存能装下的最大 ctx，速度是多少就是多少
+- warmup 结束后新增提示：`ℹ MoE offload · speed limited by PCIe bandwidth, not context size`
 
 ### v0.1.7 — MoE warmup 阈值 + /responses 端点
 - MoE offload warmup 阈值从 18 降到 8 tok/s：笔记本 MoE 受 PCIe 带宽限制，上限约 13-15 tok/s，旧阈值导致 warmup 总是 fallback 到最小 ctx，即使模型跑得好好的
