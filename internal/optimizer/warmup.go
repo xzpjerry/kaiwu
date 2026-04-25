@@ -19,11 +19,8 @@ import (
 )
 
 // minAcceptableTPS is the minimum decode speed for acceptable user experience.
-// Dense models: 18 tok/s (below this users perceive noticeable waiting).
-// MoE offload: 8 tok/s — PCIe bandwidth limits laptop MoE to 13-15 tok/s max;
-// 18 would cause warmup to always fall back to the lowest ctx.
+// Only applies to full_gpu mode — MoE offload uses threshold=0 (find largest ctx regardless of speed).
 const minAcceptableTPS = 18.0
-const minAcceptableTPSMoE = 8.0
 
 // maxUpwardProbes limits how many times we double ctx after the first success.
 // Prevents 8K→16K→32K→64K→128K→256K chains on large VRAM (each costs 30-60s).
@@ -131,11 +128,13 @@ func Warmup(profile *model.DeployProfile, binaryPath, modelPath string, hw *hard
 		batchSize, ubatchSize = 4096, 512
 	}
 
-	// MoE offload is PCIe-bandwidth-limited; laptop GPUs top out at 13-15 tok/s.
-	// Use a lower threshold so warmup finds the largest usable ctx instead of always falling back.
+	// full_gpu: speed correlates with ctx size, threshold finds the speed/ctx balance point.
+	// moe_offload: speed is PCIe-bandwidth-limited, not ctx-limited. Dropping ctx from 128K
+	// to 4K only improves speed by ~20-30%, never enough to cross a 18 tok/s threshold.
+	// Disable the threshold for MoE — just find the largest ctx that fits in VRAM.
 	tpsThreshold := minAcceptableTPS
 	if profile.Mode == "moe_offload" {
-		tpsThreshold = minAcceptableTPSMoE
+		tpsThreshold = 0
 	}
 
 	var bestCtx int
@@ -317,7 +316,10 @@ func Warmup(profile *model.DeployProfile, binaryPath, modelPath string, hw *hard
 		bestVRAM = ubBestVRAM
 	}
 
-	fmt.Printf("      \u2713 %.1f tok/s @ %s ctx\n", bestTPS, fmtCtx(bestCtx))
+	fmt.Printf("      ✓ %.1f tok/s @ %s ctx\n", bestTPS, fmtCtx(bestCtx))
+	if profile.Mode == "moe_offload" {
+		fmt.Printf("      ℹ MoE offload · speed limited by PCIe bandwidth, not context size\n")
+	}
 
 	// Save profile
 	optimized := &OptimizedProfile{
