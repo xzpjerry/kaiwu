@@ -82,11 +82,62 @@ jobs:
           New-Item -ItemType Directory -Force -Path artifact
           Copy-Item llama-cpp-turboquant\build\bin\Release\llama-server.exe artifact\llama-server-cuda.exe
           Get-ChildItem llama-cpp-turboquant\build\bin\Release\*.dll | Copy-Item -Destination artifact\
+
+          # CUDA runtime DLLs
           $cudaBin = "$env:CUDA_PATH\bin"
           @("cublas64_12.dll", "cublasLt64_12.dll", "cudart64_12.dll") | ForEach-Object {
             $src = Join-Path $cudaBin $_
             if (Test-Path $src) { Copy-Item $src artifact\ }
           }
+
+          # OpenSSL DLLs (llama-server uses HTTPS; bundle so users don't need OpenSSL installed)
+          $opensslCandidates = @(
+            "C:\Program Files\OpenSSL-Win64\bin\libssl-3-x64.dll",
+            "C:\Program Files\OpenSSL\bin\libssl-3-x64.dll",
+            "C:\Windows\System32\libssl-3-x64.dll"
+          )
+          $opensslFound = $false
+          foreach ($p in $opensslCandidates) {
+            if (Test-Path $p) {
+              Copy-Item $p artifact\
+              $dir = Split-Path $p
+              $crypto = Join-Path $dir "libcrypto-3-x64.dll"
+              if (Test-Path $crypto) { Copy-Item $crypto artifact\ }
+              Write-Host "OpenSSL bundled from: $dir"
+              $opensslFound = $true
+              break
+            }
+          }
+          if (-not $opensslFound) {
+            Write-Warning "OpenSSL DLLs not found — users may need OpenSSL installed"
+          }
+
+          # Use dumpbin to find any other non-system DLL dependencies we might have missed
+          $dumpbin = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\2022\Enterprise\VC\Tools\MSVC\*\bin\Hostx64\x64\dumpbin.exe" 2>$null
+          if (-not $dumpbin) {
+            $dumpbin = (Get-Command dumpbin.exe -ErrorAction SilentlyContinue)?.Source
+          }
+          if ($dumpbin) {
+            $deps = & $dumpbin /dependents artifact\llama-server-cuda.exe 2>&1
+            $knownSystem = @('KERNEL32','USER32','GDI32','ADVAPI32','SHELL32','OLE32','OLEAUT32',
+                             'NTDLL','MSVCRT','VCRUNTIME','MSVCP','API-MS-','EXT-MS-','NVCUDA')
+            $deps | Select-String '\.dll' | ForEach-Object {
+              $dll = ($_ -replace '^\s+','').Trim()
+              $isSystem = $knownSystem | Where-Object { $dll.ToUpper().StartsWith($_) }
+              if (-not $isSystem) {
+                # Search common locations
+                @("C:\Windows\System32", "C:\Program Files\OpenSSL-Win64\bin", $cudaBin) | ForEach-Object {
+                  $candidate = Join-Path $_ $dll
+                  if ((Test-Path $candidate) -and -not (Test-Path "artifact\$dll")) {
+                    Copy-Item $candidate artifact\
+                    Write-Host "Bundled extra dep: $dll"
+                  }
+                }
+              }
+            }
+          }
+
+          Write-Host "`nFinal artifact contents:"
           Get-ChildItem artifact\ | Format-Table Name, Length
 
       - name: Upload artifact
