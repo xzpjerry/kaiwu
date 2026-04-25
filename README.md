@@ -164,6 +164,10 @@ CPU-only inference is supported but not the focus.
 
 ## Changelog
 
+### v0.1.7 — MoE warmup threshold + /responses endpoint
+- MoE offload warmup threshold lowered 18 → 8 tok/s: laptop MoE is PCIe-limited to 13-15 tok/s max; the old threshold caused warmup to always fall back to the smallest ctx even when the model runs fine
+- Proxy now handles `/responses` (without `/v1/` prefix) in addition to `/v1/responses` — fixes 404 errors from newer Cursor and Claude Code clients
+
 ### v0.1.6 — MoE offload fix + direct path fix
 - Fixed MoE models (Qwen3-30B, DeepSeek, etc.) always failing warmup with OOM: the previous `-ot` regex for routing expert layers to CPU wasn't working; replaced with `--cpu-moe` which is natively supported
 - KV cache selection for MoE now trusts llama.cpp's `--fit` to handle layer placement, instead of guessing the GPU footprint with a hardcoded ratio
@@ -360,6 +364,10 @@ kaiwu inject
 | `version` | 显示版本号 |
 
 ## 版本历史
+
+### v0.1.7 — MoE warmup 阈值 + /responses 端点
+- MoE offload warmup 阈值从 18 降到 8 tok/s：笔记本 MoE 受 PCIe 带宽限制，上限约 13-15 tok/s，旧阈值导致 warmup 总是 fallback 到最小 ctx，即使模型跑得好好的
+- proxy 新增 `/responses` 路由（不带 `/v1/` 前缀），修复新版 Cursor 和 Claude Code 调用时的 404
 
 ### v0.1.6 — MoE offload 修复 + 直接路径修复
 - 修复 MoE 模型（Qwen3-30B、DeepSeek 等）warmup 全 OOM 的问题：之前用 `-ot` 正则把 expert 层路由到 CPU 实际没生效，改用 llama.cpp 原生支持的 `--cpu-moe`
