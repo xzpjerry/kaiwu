@@ -345,6 +345,14 @@ func runModel(modelName string, fast, bench bool, ctxSize int, reset bool, llama
 	if err != nil {
 		return err
 	}
+	// 直接路径模式：绝对路径传入时跳过下载
+	if strings.HasSuffix(strings.ToLower(modelName), ".gguf") {
+		if absPath, err := filepath.Abs(modelName); err == nil {
+			if info, err := os.Stat(absPath); err == nil && !info.IsDir() {
+				profile.LocalPath = absPath
+			}
+		}
+	}
 	// 微调模式：用户手动指定 ctx
 	if ctxSize > 0 {
 		profile.CtxOverride = ctxSize

@@ -293,7 +293,6 @@ func buildArgs(profile *model.DeployProfile, modelPath string, port int, hw *har
 		"--ctx-size", strconv.Itoa(ctxSize),
 		"--threads", strconv.Itoa(threads),
 		"--kv-unified",
-		"--fit", "on",
 	}
 
 	// Flash Attention: SM75+ (Turing and newer)
@@ -321,12 +320,15 @@ func buildArgs(profile *model.DeployProfile, modelPath string, port int, hw *har
 		args = append(args, "--mmap")
 	}
 
-	// MoE offload
-	if profile.Mode == "moe_offload" && profile.OTFlags != "" {
-		args = append(args, "-ot", profile.OTFlags)
+	// MoE offload: keep expert layers on CPU, only attention/shared layers on GPU.
+	// --cpu-moe is more reliable than -ot regex; --fit must be off to avoid
+	// the fitter overriding the CPU placement.
+	if profile.Mode == "moe_offload" {
+		args = append(args, "--cpu-moe")
 		args = append(args, "--batch-size", "4096")
 		args = append(args, "--ubatch-size", "512")
 	} else {
+		args = append(args, "--fit", "on")
 		args = append(args, "--batch-size", "512")
 		// 小模型（<2GB）用小 ubatch，避免 --kv-unified 预分配过多 VRAM
 		ubatch := 512

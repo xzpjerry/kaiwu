@@ -13,7 +13,27 @@
 
 ## 版本历史
 
-### v0.1.5（2026-04-25）— iso3 检测优化 + 带宽感知调参
+### v0.1.6（2026-04-25）— MoE offload 修复 + 直接路径修复
+
+**修复：**
+- MoE offload warmup 全 OOM 问题（根因：`-ot` 正则未生效，所有层上 GPU）
+  - 改用 `--cpu-moe` 替代 `-ot ".ffn_.*_exps.=CPU"`，更可靠
+  - `SelectKVCacheType` MoE 模式不再猜 modelVRAM_MB，直接信任 `--fit on` 处理层分配
+  - warmup 超时从 60s 延长到 180s（MoE 模型加载 ~13GB 需要更长时间）
+- 直接 GGUF 路径 bug（`kaiwu run /path/to/model.gguf` 实际走下载流程）
+  - `DeployProfile` 新增 `LocalPath` 字段
+  - `EnsureFile` 优先返回 `LocalPath`，跳过下载
+
+**架构改进：**
+- 分工更清晰：`--fit on` 负责层分配（llama.cpp 比 Kaiwu 算得准），Kaiwu 负责 KV cache 类型选择和速度探测
+
+**实测数据（RTX 5060 Laptop 8GB）：**
+- Qwen3-30B-A3B Q3_K_XL：32K ctx · f16 KV · 4.8 GB VRAM · **8.7 tok/s**
+- Qwen3-8B Q5_K_M：28K ctx · q8_0 KV · 7.2 GB VRAM · **38.3 tok/s**
+- Llama 3.1 8B Q5_K_M：64K ctx · f16 KV · 7.5 GB VRAM · **29.1 tok/s**
+
+---
+
 
 **修复：**
 - iso3 检测结果缓存到磁盘（`~/.kaiwu/iso3_support_<mtime>.txt`），同一 binary 只检测一次

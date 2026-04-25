@@ -15,6 +15,14 @@ import (
 
 // EnsureFile ensures the model GGUF file is available locally
 func EnsureFile(profile *DeployProfile) (string, error) {
+	// Direct path mode: skip download entirely
+	if profile.LocalPath != "" {
+		if info, err := os.Stat(profile.LocalPath); err == nil && !info.IsDir() {
+			return profile.LocalPath, nil
+		}
+		return "", fmt.Errorf("local path not found: %s", profile.LocalPath)
+	}
+
 	cfg, err := config.Load()
 	if err != nil {
 		return "", err

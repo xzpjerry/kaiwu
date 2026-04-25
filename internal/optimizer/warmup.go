@@ -373,8 +373,15 @@ func BuildArgs(profile *model.DeployProfile, modelPath string, port int, hw *har
 		"--batch-size", strconv.Itoa(batchSize),
 		"--ubatch-size", strconv.Itoa(ubatchSize),
 		"--kv-unified",
-		"--fit", "on",
 	}
+
+	// MoE offload: keep expert layers on CPU, only attention/shared layers on GPU.
+	// --cpu-moe is more reliable than -ot regex.
+	// Keep --fit on so llama.cpp does the final precise layer allocation.
+	if profile.Mode == "moe_offload" {
+		args = append(args, "--cpu-moe")
+	}
+	args = append(args, "--fit", "on")
 
 	// Flash Attention: SM75+ (Turing and newer)
 	if hw.SupportsFlashAttn() {
@@ -400,13 +407,6 @@ func BuildArgs(profile *model.DeployProfile, modelPath string, port int, hw *har
 	// Skip when mlock is active (mlock+mmap can conflict on some systems)
 	if !useMlock && shouldMmap(hw, profile) {
 		args = append(args, "--mmap")
-	}
-
-	// MoE-specific parameters
-	if profile.Mode == "moe_offload" && profile.OTFlags != "" {
-		otValue := strings.TrimPrefix(profile.OTFlags, "-ot ")
-		otValue = strings.Trim(otValue, "\"'")
-		args = append(args, "-ot", otValue)
 	}
 
 	return args
@@ -465,7 +465,7 @@ func startBenchServer(binaryPath string, args []string, port int) (*os.Process, 
 	}()
 
 	// Wait for health endpoint
-	deadline := time.Now().Add(60 * time.Second)
+	deadline := time.Now().Add(180 * time.Second) // MoE models need longer to load (~13GB from RAM)
 	for time.Now().Before(deadline) {
 		resp, err := http.Get(fmt.Sprintf("http://127.0.0.1:%d/health", port))
 		if err == nil {

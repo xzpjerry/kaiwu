@@ -34,10 +34,20 @@ func bytesPerKVType(kvType string) float64 {
 
 // SelectKVCacheType chooses the fastest KV cache type that fits in available VRAM.
 // Strategy: try f16 first (fastest), fall back to q8_0+q4_0 if tight, then iso3, then q4_0+q4_0.
+//
+// For moe_offload: --fit on handles layer allocation; we only need to fit KV cache.
+// Use full vramMB as baseline — llama.cpp will carve out model weights itself.
 func (p *DeployProfile) SelectKVCacheType(vramMB int, ctxSize int) (k, v string) {
-	modelVRAM_MB := int(p.Size_GB * 1024)
-	reserveMB := 1024 // 1GB for activations, overhead, etc.
-	freeAfterModel := vramMB - modelVRAM_MB - reserveMB
+	var freeAfterModel int
+	if p.Mode == "moe_offload" {
+		// --fit on handles model layer placement. KV cache competes with compute buffer only.
+		// Reserve 1.5GB for attention weights + compute overhead (conservative).
+		freeAfterModel = vramMB - 1536
+	} else {
+		modelVRAM_MB := int(p.Size_GB * 1024)
+		reserveMB := 1024 // 1GB for activations, overhead, etc.
+		freeAfterModel = vramMB - modelVRAM_MB - reserveMB
+	}
 
 	// Try f16 first (fastest, same as LM Studio default)
 	kvF16_MB := p.EstimateKVCacheMB(ctxSize, "f16") * 2 // K + V
