@@ -19,9 +19,11 @@ import (
 )
 
 // minAcceptableTPS is the minimum decode speed for acceptable user experience.
-// Below 18 tok/s users perceive noticeable waiting; 20-40 is comfortable.
-// Use 18 instead of 20 to absorb single-measurement variance (~10%).
+// Dense models: 18 tok/s (below this users perceive noticeable waiting).
+// MoE offload: 8 tok/s — PCIe bandwidth limits laptop MoE to 13-15 tok/s max;
+// 18 would cause warmup to always fall back to the lowest ctx.
 const minAcceptableTPS = 18.0
+const minAcceptableTPSMoE = 8.0
 
 // maxUpwardProbes limits how many times we double ctx after the first success.
 // Prevents 8K→16K→32K→64K→128K→256K chains on large VRAM (each costs 30-60s).
@@ -129,6 +131,13 @@ func Warmup(profile *model.DeployProfile, binaryPath, modelPath string, hw *hard
 		batchSize, ubatchSize = 4096, 512
 	}
 
+	// MoE offload is PCIe-bandwidth-limited; laptop GPUs top out at 13-15 tok/s.
+	// Use a lower threshold so warmup finds the largest usable ctx instead of always falling back.
+	tpsThreshold := minAcceptableTPS
+	if profile.Mode == "moe_offload" {
+		tpsThreshold = minAcceptableTPSMoE
+	}
+
 	var bestCtx int
 	var bestTPS float64
 	var bestArgs []string
@@ -194,9 +203,9 @@ func Warmup(profile *model.DeployProfile, binaryPath, modelPath string, hw *hard
 				continue
 			}
 
-			if tps < minAcceptableTPS {
+			if tps < tpsThreshold {
 				// Too slow: record ceiling, keep as fallback, halve
-				fmt.Printf("%.1f tok/s (< %.0f, too slow)\n", tps, minAcceptableTPS)
+				fmt.Printf("%.1f tok/s (< %.0f, too slow)\n", tps, tpsThreshold)
 				if failedCtx == 0 || ctxTry < failedCtx {
 					failedCtx = ctxTry
 				}
@@ -256,7 +265,7 @@ func Warmup(profile *model.DeployProfile, binaryPath, modelPath string, hw *hard
 					hi = mid
 					continue
 				}
-				if tps < minAcceptableTPS {
+				if tps < tpsThreshold {
 					fmt.Printf("%.1f tok/s (too slow)\n", tps)
 					hi = mid
 					continue

@@ -49,6 +49,8 @@ func (s *Server) Start() error {
 
 	// /v1/responses — format conversion for Codex CLI
 	mux.HandleFunc("/v1/responses", s.handleResponses)
+	// /responses — same, without /v1/ prefix (newer clients like Cursor, Claude Code)
+	mux.HandleFunc("/responses", s.handleResponses)
 
 	// /v1/chat/completions — streaming-aware proxy with repetition detection
 	mux.HandleFunc("/v1/chat/completions", s.handleChatCompletions)
