@@ -29,13 +29,8 @@ type RunningEngine struct {
 
 // Start starts llama-server with probe-and-retry strategy.
 // 探测式启动：尝试最优 ctx → OOM 就减半重试 → 最多 3 次。
+// 注意：iso3 检测已在 main.go [4/6] Preflight 阶段完成，profile.HasIsoQuant 已更新。
 func Start(profile *model.DeployProfile, binaryPath, modelPath string, hw *hardware.HardwareProbe) (*RunningEngine, error) {
-	// 运行时探测 llama-server 是否支持 iso3（带 SM 版本，SM<75 直接跳过）
-	if profile.HasIsoQuant && !DetectIso3SupportForSM(binaryPath, hw.SMVersion()) {
-		fmt.Println("      llama-server 不支持 iso3，回退到 q8_0/q4_0")
-		profile.HasIsoQuant = false
-	}
-
 	ctxSize := IdealStartCtx(profile, hw)
 
 	for attempt := 0; attempt < 3; attempt++ {
