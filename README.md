@@ -160,6 +160,12 @@ CPU-only inference is supported but not the focus.
 
 ## Changelog
 
+### v0.1.6 — MoE offload fix + direct path fix
+- Fixed MoE offload warmup always OOM: replaced `-ot` regex with `--cpu-moe` (more reliable)
+- `SelectKVCacheType` no longer guesses MoE GPU footprint — trusts `--fit on` for layer allocation
+- Warmup timeout 60s → 180s for large MoE model loading
+- Fixed `kaiwu run /path/to/model.gguf` silently downloading instead of using local file
+
 ### v0.1.5 — iso3 cache + bandwidth-aware tuning
 - iso3 detection result cached to disk — same binary only detects once
 - SM-aware timeout: SM<75 skipped, SM75-119 uses 15s, SM120+ uses 60s
@@ -346,6 +352,12 @@ kaiwu inject
 | `version` | 显示版本号 |
 
 ## 版本历史
+
+### v0.1.6 — MoE offload 修复 + 直接路径修复
+- 修复 MoE offload warmup 全 OOM：用 `--cpu-moe` 替代 `-ot` 正则（更可靠）
+- `SelectKVCacheType` 不再猜 MoE GPU 占用，直接信任 `--fit on` 处理层分配
+- warmup 超时 60s → 180s（大 MoE 模型加载 ~13GB 需要更长时间）
+- 修复 `kaiwu run /path/to/model.gguf` 实际走下载而非使用本地文件的 bug
 
 ### v0.1.5 — iso3 缓存 + 带宽感知调参
 - iso3 检测结果缓存到磁盘，同一 binary 只检测一次
