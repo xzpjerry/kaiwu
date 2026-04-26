@@ -164,6 +164,12 @@ CPU-only inference is supported but not the focus.
 
 ## Changelog
 
+### v0.2.2 — Blackwell OOM fix + --host flag
+- Fixed RTX 50-series (SM120) OOM on all context sizes: `--kv-unified` causes massive VRAM over-allocation with CUDA 12.4 binary on CUDA 13.x driver. Now skipped on Blackwell — llama.cpp uses paged KV allocation instead (grows on demand)
+- Warmup start point on Blackwell changed from `ideal×2` to `ideal` — the aggressive headroom caused all 8 probes to OOM before finding a working config
+- iso3 detection no longer depends on `.kaiwu` marker file — `EnsureBinary` returns `isTurboQuant` directly (bundled = turboquant, downloaded = not)
+- New `--host` flag: `kaiwu run model --host 0.0.0.0` to listen on all interfaces (LAN access). Default remains `127.0.0.1`
+
 ### v0.2.0 — iso3 detection rewrite (static, no more timeouts)
 - Replaced runtime iso3 detection (`--help` + timeout) with static check: marker file + SM >= 80. Eliminates all JIT timeout failures on RTX 50-series (SM120) and CUDA 13.x
 - CI now ships a `.kaiwu` marker file alongside the turboquant binary
@@ -383,6 +389,12 @@ kaiwu inject
 | `version` | 显示版本号 |
 
 ## 版本历史
+
+### v0.2.2 — Blackwell OOM 修复 + --host 参数
+- 修复 RTX 50 系（SM120）所有上下文大小都 OOM 的问题：`--kv-unified` 在 CUDA 12.4 binary + CUDA 13.x 驱动下会过度分配显存。Blackwell 现在跳过此参数，llama.cpp 改用分页式 KV 分配（按需增长）
+- Blackwell warmup 起点从 `ideal×2` 改为 `ideal`——激进的探顶策略导致 8 次探测全部 OOM
+- iso3 检测不再依赖 `.kaiwu` 标记文件——`EnsureBinary` 直接返回 `isTurboQuant`（bundled = turboquant，下载的 = 不是）
+- 新增 `--host` 参数：`kaiwu run model --host 0.0.0.0` 监听所有网卡（局域网访问）。默认仍为 `127.0.0.1`
 
 ### v0.2.0 — iso3 检测重写（静态判断，不再超时）
 - iso3 检测从运行时（`--help` + 超时）改为静态判断：标记文件 + SM >= 80。彻底消除 RTX 50 系（SM120）和 CUDA 13.x 下的 JIT 超时误判
