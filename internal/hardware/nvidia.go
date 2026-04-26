@@ -2,6 +2,7 @@ package hardware
 
 import (
 	"encoding/xml"
+	"fmt"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -27,10 +28,10 @@ type nvidiaSMIG struct {
 	} `xml:"max_clocks"`
 }
 
-// detectNVIDIA detects NVIDIA GPUs using nvidia-smi XML output + CSV for compute_cap.
-// XML is stable across all driver versions and GPU types (GeForce/Tesla/Quadro).
+// detectNVIDIA detects NVIDIA GPUs using nvidia-smi XML output + CSV fallback.
+// XML provides name, memory, bandwidth; CSV provides compute_cap and VRAM fallback.
 func detectNVIDIA() ([]GPUInfo, error) {
-	// Step 1: XML for name, memory, driver
+	// Step 1: XML for name, memory, driver, bandwidth
 	xmlOut, err := exec.Command("nvidia-smi", "-q", "-x").Output()
 	if err != nil {
 		return nil, err
@@ -45,14 +46,24 @@ func detectNVIDIA() ([]GPUInfo, error) {
 		return nil, nil
 	}
 
-	// Step 2: CSV for compute_cap (not available in XML)
+	// Step 2: CSV for compute_cap + VRAM fallback (stable across all driver versions)
 	computeCaps := queryComputeCaps(len(smiLog.GPUs))
+	csvVRAM := queryCSVMemory(len(smiLog.GPUs))
 
 	gpus := make([]GPUInfo, 0, len(smiLog.GPUs))
 	for i, g := range smiLog.GPUs {
-		vramTotal := parseMiB(g.FBMemory.Total)
-		vramUsed := parseMiB(g.FBMemory.Used)
-		vramFree := parseMiB(g.FBMemory.Free)
+		vramTotal := parseMemValue(g.FBMemory.Total)
+		vramUsed := parseMemValue(g.FBMemory.Used)
+		vramFree := parseMemValue(g.FBMemory.Free)
+
+		// CSV fallback: if XML fb_memory_usage is empty/zero (schema change in newer drivers)
+		if vramTotal == 0 && i < len(csvVRAM) && csvVRAM[i] > 0 {
+			vramTotal = csvVRAM[i]
+			vramFree = vramTotal - vramUsed
+			if vramFree < 0 {
+				vramFree = 0
+			}
+		}
 
 		cc := ""
 		if i < len(computeCaps) {
@@ -72,6 +83,13 @@ func detectNVIDIA() ([]GPUInfo, error) {
 			MemBandwidth_GBs: calcBandwidth(g, strings.TrimSpace(g.ProductName)),
 			IsBlackwell:      isBlackwell,
 		})
+	}
+
+	// Debug: warn if any GPU has 0 VRAM (helps diagnose driver issues)
+	for _, g := range gpus {
+		if g.VRAM_MB == 0 {
+			fmt.Printf("      ⚠  GPU %d (%s): VRAM=0, nvidia-smi XML may have changed. Report this to https://github.com/val1813/kaiwu/issues\n", g.Index, g.Name)
+		}
 	}
 
 	return gpus, nil
@@ -126,13 +144,40 @@ func queryComputeCaps(gpuCount int) []string {
 	return caps
 }
 
-// parseMiB extracts integer MiB from strings like "24564 MiB" or "24564"
-func parseMiB(s string) int {
+// parseMemValue extracts integer MiB from strings like "24564 MiB", "24564 MB", "24,564 MiB", or "24564".
+// Handles unit variations across nvidia-smi driver versions.
+func parseMemValue(s string) int {
 	s = strings.TrimSpace(s)
-	s = strings.TrimSuffix(s, " MiB")
+	// Remove known units
+	for _, suffix := range []string{" MiB", " MB", " mib", " mb"} {
+		s = strings.TrimSuffix(s, suffix)
+	}
 	s = strings.TrimSpace(s)
+	// Remove commas (e.g. "16,384")
+	s = strings.ReplaceAll(s, ",", "")
 	v, _ := strconv.Atoi(s)
 	return v
+}
+
+// queryCSVMemory reads total VRAM via CSV as fallback when XML fb_memory_usage is empty.
+// This handles nvidia-smi XML schema changes across driver versions.
+func queryCSVMemory(gpuCount int) []int {
+	out, err := exec.Command("nvidia-smi",
+		"--query-gpu=memory.total",
+		"--format=csv,noheader,nounits").Output()
+	if err != nil {
+		return make([]int, gpuCount)
+	}
+
+	vrams := make([]int, 0, gpuCount)
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		line = strings.TrimSpace(line)
+		line = strings.ReplaceAll(line, ",", "")
+		if v, err := strconv.Atoi(line); err == nil {
+			vrams = append(vrams, v)
+		}
+	}
+	return vrams
 }
 
 // detectNVLink checks if NVLink is present between GPUs via nvidia-smi

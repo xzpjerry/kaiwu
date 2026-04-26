@@ -170,6 +170,8 @@ CPU-only inference is supported but not the focus.
 - Removed `DetectIso3Support`, `DetectIso3SupportForSM`, and all iso3 cache logic
 - New `ClusterCapabilities` architecture: multi-GPU capability decisions now take the intersection (min SM, all-support-iso3, all-support-FA) instead of relying on a single "primary" GPU. Resources (VRAM, bandwidth) are summed. Fixes heterogeneous multi-GPU misdetection (e.g. 4070+3060 where both have 12GB VRAM)
 - `PrimaryGPU()` now selects by bandwidth (not VRAM), used only for display — all capability checks go through `ClusterCaps()`
+- VRAM detection: added CSV fallback when XML `fb_memory_usage` returns 0 (newer driver schema changes). `parseMemValue` now handles "MiB", "MB", and comma-separated numbers
+- Warns when GPU VRAM=0 detected, with link to report the issue
 
 ### v0.1.9 — Multi-GPU tensor split optimization
 - Multi-GPU tensor split now weighted by VRAM × bandwidth instead of VRAM alone. Heterogeneous setups (e.g. 3090+4090+5060) get smarter layer distribution — weak cards receive fewer layers so they don't bottleneck the system
@@ -388,6 +390,8 @@ kaiwu inject
 - 删除 `DetectIso3Support`、`DetectIso3SupportForSM` 及所有 iso3 缓存逻辑
 - 新增 `ClusterCapabilities` 架构：多卡能力判断改为取交集（最低 SM、全部支持 iso3、全部支持 FA），资源取总和。修复异构多卡误识别（如 4070+3060 同为 12GB 时主卡选错）
 - `PrimaryGPU()` 改为按带宽选主卡（不再按 VRAM），仅用于显示——所有能力判断走 `ClusterCaps()`
+- VRAM 检测：XML `fb_memory_usage` 返回 0 时自动用 CSV fallback（兼容新版驱动 schema 变化）。`parseMemValue` 支持 "MiB"/"MB"/逗号分隔数字
+- GPU VRAM=0 时打印警告和 issue 链接，方便用户反馈
 
 ### v0.1.9 — 多卡 tensor split 优化
 - 多卡 tensor split 从纯按显存比例改为按 显存×带宽 加权。异构多卡（如 3090+4090+5060）分配更合理——弱卡少分层，不拖慢整体
