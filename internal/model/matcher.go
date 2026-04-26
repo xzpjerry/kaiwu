@@ -30,9 +30,10 @@ type DeployProfile struct {
 	HeadDim      int  // attention head dimension（通常 128）
 	EmbeddingDim int  // embedding dimension（hidden_size）
 	NativeCtx    int  // 模型原生最大上下文（从 GGUF context_length 读取）
-	CtxOverride  int    // 微调模式：用户手动指定的 ctx 大小，0 = 自动
-	HasIsoQuant  bool   // IsoQuant KV cache 压缩是否可用
-	IsHybrid     bool   // hybrid attention+recurrent architecture (DeltaNet/SSM/Mamba)
+	CtxOverride    int  // 微调模式：用户手动指定的 ctx 大小，0 = 自动
+	HasIsoQuant    bool // IsoQuant KV cache 压缩是否可用
+	IsHybrid       bool // hybrid attention+recurrent architecture (DeltaNet/SSM/Mamba)
+	MeasuredVRAM_MB int  // warmup 实测显存占用（MB），用于 MoE SelectKVCacheType 精确计算，0=未测
 	LocalPath    string // 直接路径模式：绝对路径，跳过下载
 }
 

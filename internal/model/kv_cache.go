@@ -40,9 +40,18 @@ func bytesPerKVType(kvType string) float64 {
 func (p *DeployProfile) SelectKVCacheType(vramMB int, ctxSize int) (k, v string) {
 	var freeAfterModel int
 	if p.Mode == "moe_offload" {
-		// --fit on handles model layer placement. KV cache competes with compute buffer only.
-		// Reserve 1.5GB for attention weights + compute overhead (conservative).
-		freeAfterModel = vramMB - 1536
+		// MoE offload: expert layers live in CPU RAM, only attention layers stay on GPU.
+		// Attention VRAM ≈ total_size * 0.30 (Qwen3-MoE ~28/94 layers, Mixtral ~0.25).
+		// Minimum floor 1024MB for small models.
+		attentionVRAM := int(p.Size_GB * 1024 * 0.30)
+		if attentionVRAM < 1024 {
+			attentionVRAM = 1024
+		}
+		// If warmup measured actual VRAM usage, use that instead (more accurate)
+		if p.MeasuredVRAM_MB > 0 {
+			attentionVRAM = p.MeasuredVRAM_MB
+		}
+		freeAfterModel = vramMB - attentionVRAM
 	} else {
 		modelVRAM_MB := int(p.Size_GB * 1024)
 		reserveMB := 1024 // 1GB for activations, overhead, etc.

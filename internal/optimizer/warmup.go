@@ -289,6 +289,12 @@ func Warmup(profile *model.DeployProfile, binaryPath, modelPath string, hw *hard
 		return nil, fmt.Errorf("all ctx probes failed (tried down to 4K)")
 	}
 
+	// MoE offload: warmup 后把实测 VRAM 回写到 profile。
+	// SelectKVCacheType 下次调用时会用这个值代替估算值，更准确。
+	if profile.Mode == "moe_offload" && bestVRAM > 0 {
+		profile.MeasuredVRAM_MB = bestVRAM
+	}
+
 	// --- Phase 2: ubatch 探测 ---
 	// 低带宽卡（< 200 GB/s）只测 128，避免大 ubatch 加剧带宽瓶颈
 	// 用 ClusterCaps.MinBandwidth：任何一张卡带宽低就限制 ubatch
@@ -368,8 +374,8 @@ func BuildArgs(profile *model.DeployProfile, modelPath string, port int, hw *har
 	kvK, kvV := profile.SelectKVCacheType(vramMB, ctxSize)
 
 	// Parallel slots: 单用户场景用 1 slot（速度优先）
-	// 8GB 以下必须 1 slot，大显存可以考虑多 slot 但目前统一用 1
-	parallel := "1"
+	// 多 slot 会预分配多份 KV cache，压缩可用 ctx，本地单人场景得不偿失
+	parallel := 1
 
 	useMlock := shouldMlock(hw, profile)
 
@@ -378,7 +384,7 @@ func BuildArgs(profile *model.DeployProfile, modelPath string, port int, hw *har
 		"--host", "127.0.0.1",
 		"--port", strconv.Itoa(port),
 		"--n-gpu-layers", "999",
-		"--parallel", parallel,
+		"--parallel", strconv.Itoa(parallel),
 		"--cont-batching",
 		"--metrics",
 		"--no-webui",
