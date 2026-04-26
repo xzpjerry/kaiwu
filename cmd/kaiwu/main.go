@@ -396,6 +396,7 @@ func runModel(modelName string, fast, bench bool, ctxSize int, reset bool, llama
 	// [3/5] Check files
 	fmt.Printf("\n[3/6] Checking files...\n")
 	var binaryPath string
+	var isTurboQuant bool
 	if llamaServer != "" {
 		if _, err := os.Stat(llamaServer); err != nil {
 			return fmt.Errorf("指定的 llama-server 不存在: %s", llamaServer)
@@ -404,7 +405,7 @@ func runModel(modelName string, fast, bench bool, ctxSize int, reset bool, llama
 		fmt.Printf("      Binary: %s [user-specified]\n", filepath.Base(binaryPath))
 	} else {
 		var err error
-		binaryPath, err = engine.EnsureBinary(hw)
+		binaryPath, isTurboQuant, err = engine.EnsureBinary(hw)
 		if err != nil {
 			return fmt.Errorf("failed to ensure binary: %w", err)
 		}
@@ -420,9 +421,9 @@ func runModel(modelName string, fast, bench bool, ctxSize int, reset bool, llama
 
 	// [4/6] OOM preflight check
 	fmt.Printf("\n[4/6] Preflight check...\n")
-	// iso3: static check (marker file + all GPUs SM>=80), no runtime --help detection
+	// iso3: static check (bundled turboquant binary + all GPUs SM>=80)
 	caps := hw.ClusterCaps()
-	if profile.HasIsoQuant && !engine.ShouldUseIso3(binaryPath, caps.MinSM) {
+	if profile.HasIsoQuant && !engine.ShouldUseIso3(isTurboQuant, caps.MinSM) {
 		fmt.Printf("      iso3 不可用（MinSM%d 或非 turboquant binary），回退到 q8_0/q4_0\n", caps.MinSM)
 		profile.HasIsoQuant = false
 	}

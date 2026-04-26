@@ -68,20 +68,21 @@ func downloadURL(hw *hardware.HardwareProbe) string {
 
 // EnsureBinary ensures the correct llama-server binary is available.
 // Priority: bundled iso3 binary > cached binary > download official release.
-func EnsureBinary(hw *hardware.HardwareProbe) (string, error) {
+// Returns (path, isTurboQuant, error). isTurboQuant=true means the binary supports iso3.
+func EnsureBinary(hw *hardware.HardwareProbe) (string, bool, error) {
 	binaryName := selectBinary(hw)
 
 	// 1. Check for bundled iso3 binary (shipped with kaiwu release)
 	bundledPath := findBundledBinary(binaryName)
 	if bundledPath != "" {
 		fmt.Printf("      Using bundled iso3 binary: %s\n", filepath.Base(bundledPath))
-		return bundledPath, nil
+		return bundledPath, true, nil
 	}
 
 	// 2. Check cached binary in ~/.kaiwu/bin/
 	binaryPath := filepath.Join(config.BinDir(), binaryName)
 	if _, err := os.Stat(binaryPath); err == nil {
-		return binaryPath, nil
+		return binaryPath, false, nil
 	}
 
 	// 3. Download official release as fallback
@@ -90,13 +91,13 @@ func EnsureBinary(hw *hardware.HardwareProbe) (string, error) {
 
 	archivePath := filepath.Join(config.BinDir(), filepath.Base(url))
 	if err := download.DownloadFile(url, archivePath, true); err != nil {
-		return "", fmt.Errorf("download failed: %w", err)
+		return "", false, fmt.Errorf("download failed: %w", err)
 	}
 
 	fmt.Printf("      Extracting llama-server...\n")
 	if err := extractLlamaServer(archivePath, binaryPath); err != nil {
 		os.Remove(archivePath)
-		return "", fmt.Errorf("extraction failed: %w", err)
+		return "", false, fmt.Errorf("extraction failed: %w", err)
 	}
 
 	os.Remove(archivePath)
@@ -105,7 +106,7 @@ func EnsureBinary(hw *hardware.HardwareProbe) (string, error) {
 		os.Chmod(binaryPath, 0755)
 	}
 
-	return binaryPath, nil
+	return binaryPath, false, nil
 }
 
 // VerifyBackend checks that the binary actually supports the expected backend.
@@ -285,18 +286,9 @@ func extractFromTarGz(archivePath, destPath string) error {
 }
 
 // ShouldUseIso3 determines iso3 support via static checks — no runtime detection.
-// Two conditions: (1) SM >= 80 (Ampere+), (2) binary is turboquant build (marker file exists).
-// This replaces the old DetectIso3Support which ran --help and was prone to JIT timeout on SM120.
-func ShouldUseIso3(binaryPath string, sm int) bool {
-	if sm < 80 {
-		return false
-	}
-	marker := binaryPath + ".kaiwu"
-	data, err := os.ReadFile(marker)
-	if err != nil {
-		return false
-	}
-	return strings.Contains(string(data), "turboquant-iso3")
+// Two conditions: (1) SM >= 80 (Ampere+), (2) binary is turboquant build.
+func ShouldUseIso3(isTurboQuant bool, sm int) bool {
+	return isTurboQuant && sm >= 80
 }
 
 // ValidateCUDAVersion checks for known CUDA driver issues
