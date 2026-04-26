@@ -171,7 +171,13 @@ func Warmup(profile *model.DeployProfile, binaryPath, modelPath string, hw *hard
 			startCtx = nativeMax
 		} else {
 			ideal := engine.IdealStartCtx(profile, hw)
-			startCtx = ideal * 2
+			// Blackwell (SM120) + CUDA 12.4 binary: VRAM margins are tight,
+			// ideal×2 causes all probes to OOM. Start from ideal directly.
+			if hw.ClusterCaps().HasBlackwell {
+				startCtx = ideal
+			} else {
+				startCtx = ideal * 2
+			}
 			if startCtx > nativeMax {
 				startCtx = nativeMax
 			}
@@ -383,7 +389,13 @@ func BuildArgs(profile *model.DeployProfile, modelPath string, port int, hw *har
 		"--threads", strconv.Itoa(threadsForMode(profile.Mode, hw)),
 		"--batch-size", strconv.Itoa(batchSize),
 		"--ubatch-size", strconv.Itoa(ubatchSize),
-		"--kv-unified",
+	}
+
+	// --kv-unified: pre-allocate KV cache as one contiguous block.
+	// Blackwell (SM120) + CUDA 12.4 binary on CUDA 13.x driver causes massive over-allocation → OOM.
+	// Without this flag, llama.cpp uses paged KV allocation (grows on demand).
+	if !hw.ClusterCaps().HasBlackwell {
+		args = append(args, "--kv-unified")
 	}
 
 	// MoE offload: keep expert layers on CPU, only attention/shared layers on GPU.

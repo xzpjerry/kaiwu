@@ -291,7 +291,12 @@ func buildArgs(profile *model.DeployProfile, modelPath string, port int, hw *har
 		"-ctv", kvV,
 		"--ctx-size", strconv.Itoa(ctxSize),
 		"--threads", strconv.Itoa(threads),
-		"--kv-unified",
+	}
+
+	// --kv-unified: pre-allocate KV cache as one contiguous block.
+	// Blackwell (SM120) + CUDA 12.4 binary on CUDA 13.x driver causes massive over-allocation → OOM.
+	if !hw.ClusterCaps().HasBlackwell {
+		args = append(args, "--kv-unified")
 	}
 
 	// Flash Attention: SM75+ (Turing and newer)
