@@ -29,7 +29,7 @@ type RunningEngine struct {
 // Start starts llama-server with probe-and-retry strategy.
 // 探测式启动：尝试最优 ctx → OOM 就减半重试 → 最多 3 次。
 // 注意：iso3 检测已在 main.go [4/6] Preflight 阶段完成，profile.HasIsoQuant 已更新。
-func Start(profile *model.DeployProfile, binaryPath, modelPath string, hw *hardware.HardwareProbe) (*RunningEngine, error) {
+func Start(profile *model.DeployProfile, binaryPath, modelPath string, hw *hardware.HardwareProbe, host string) (*RunningEngine, error) {
 	ctxSize := IdealStartCtx(profile, hw)
 
 	for attempt := 0; attempt < 3; attempt++ {
@@ -37,7 +37,7 @@ func Start(profile *model.DeployProfile, binaryPath, modelPath string, hw *hardw
 			fmt.Printf("      ⚠️  显存不足，降低上下文至 %dK 重试...\n", ctxSize/1024)
 		}
 
-		eng, err := startOnce(profile, binaryPath, modelPath, hw, ctxSize)
+		eng, err := startOnce(profile, binaryPath, modelPath, hw, ctxSize, host)
 		if err == nil {
 			eng.CtxSize = ctxSize
 			return eng, nil
@@ -67,9 +67,9 @@ func Start(profile *model.DeployProfile, binaryPath, modelPath string, hw *hardw
 }
 
 // StartWithArgs starts llama-server with pre-optimized args from warmup.
-func StartWithArgs(profile *model.DeployProfile, binaryPath, modelPath string, hw *hardware.HardwareProbe, optimizedArgs []string) (*RunningEngine, error) {
+func StartWithArgs(profile *model.DeployProfile, binaryPath, modelPath string, hw *hardware.HardwareProbe, optimizedArgs []string, host string) (*RunningEngine, error) {
 	if len(optimizedArgs) == 0 {
-		return Start(profile, binaryPath, modelPath, hw)
+		return Start(profile, binaryPath, modelPath, hw, host)
 	}
 
 	cfg, err := config.Load()
@@ -82,13 +82,15 @@ func StartWithArgs(profile *model.DeployProfile, binaryPath, modelPath string, h
 		fmt.Printf("Port %d in use, using %d instead\n", cfg.LlamaPort, actualPort)
 	}
 
-	// Patch port in optimized args
+	// Patch port and host in optimized args
 	args := make([]string, len(optimizedArgs))
 	copy(args, optimizedArgs)
 	for i, a := range args {
 		if a == "--port" && i+1 < len(args) {
 			args[i+1] = strconv.Itoa(actualPort)
-			break
+		}
+		if a == "--host" && i+1 < len(args) && host != "" {
+			args[i+1] = host
 		}
 	}
 
@@ -96,7 +98,7 @@ func StartWithArgs(profile *model.DeployProfile, binaryPath, modelPath string, h
 }
 
 // startOnce 单次启动尝试
-func startOnce(profile *model.DeployProfile, binaryPath, modelPath string, hw *hardware.HardwareProbe, ctxSize int) (*RunningEngine, error) {
+func startOnce(profile *model.DeployProfile, binaryPath, modelPath string, hw *hardware.HardwareProbe, ctxSize int, host string) (*RunningEngine, error) {
 	cfg, err := config.Load()
 	if err != nil {
 		return nil, err
@@ -107,7 +109,7 @@ func startOnce(profile *model.DeployProfile, binaryPath, modelPath string, hw *h
 		fmt.Printf("Port %d in use, using %d instead\n", cfg.LlamaPort, actualPort)
 	}
 
-	args := buildArgs(profile, modelPath, actualPort, hw, ctxSize)
+	args := buildArgs(profile, modelPath, actualPort, hw, ctxSize, host)
 	return launchProcess(profile, binaryPath, args, actualPort)
 }
 
@@ -266,7 +268,7 @@ func Status() (*RunningEngine, error) {
 // buildArgs constructs llama-server command-line arguments
 // This is the fallback path when warmup cache is unavailable.
 // Logic mirrors optimizer.BuildArgs to keep parameters consistent.
-func buildArgs(profile *model.DeployProfile, modelPath string, port int, hw *hardware.HardwareProbe, ctxSize int) []string {
+func buildArgs(profile *model.DeployProfile, modelPath string, port int, hw *hardware.HardwareProbe, ctxSize int, host string) []string {
 	vramMB := hw.TotalVRAM_MB() // 多卡总VRAM
 
 	threads := threadsForMode(profile.Mode, hw)
@@ -276,10 +278,14 @@ func buildArgs(profile *model.DeployProfile, modelPath string, port int, hw *har
 
 	useMlock := shouldMlockEngine(hw, profile)
 
+	if host == "" {
+		host = "127.0.0.1"
+	}
+
 	args := []string{
 		"--model", modelPath,
 		"--alias", profile.ModelID,
-		"--host", "127.0.0.1",
+		"--host", host,
 		"--port", strconv.Itoa(port),
 		"--n-gpu-layers", "999",
 		"--parallel", "1",

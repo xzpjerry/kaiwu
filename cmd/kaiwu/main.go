@@ -71,12 +71,13 @@ func newRunCmd() *cobra.Command {
 	var ctxSize int
 	var reset bool
 	var llamaServer string
+	var host string
 	cmd := &cobra.Command{
 		Use:   "run <model>",
 		Short: "Deploy and start a model",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runModel(args[0], fast, bench, ctxSize, reset, llamaServer)
+			return runModel(args[0], fast, bench, ctxSize, reset, llamaServer, host)
 		},
 	}
 	cmd.Flags().BoolVar(&fast, "fast", false, "Skip warmup, use cached profile")
@@ -88,6 +89,7 @@ func newRunCmd() *cobra.Command {
 	// 0 = 自动模式（根据 VRAM 和模型大小动态计算最优值）
 	cmd.Flags().IntVar(&ctxSize, "ctx-size", 0, "手动指定上下文大小（0=自动）")
 	cmd.Flags().StringVar(&llamaServer, "llama-server", "", "使用自定义 llama-server 二进制（完整路径）")
+	cmd.Flags().StringVar(&host, "host", "127.0.0.1", "监听地址（默认 127.0.0.1，用 0.0.0.0 开放局域网）")
 	return cmd
 }
 
@@ -303,7 +305,7 @@ func showMainMenu() {
 	fmt.Println()
 }
 
-func runModel(modelName string, fast, bench bool, ctxSize int, reset bool, llamaServer string) error {
+func runModel(modelName string, fast, bench bool, ctxSize int, reset bool, llamaServer string, host string) error {
 	printLogo()
 	fmt.Println()
 
@@ -458,7 +460,7 @@ func runModel(modelName string, fast, bench bool, ctxSize int, reset bool, llama
 	if optimized != nil {
 		optimizedArgs = optimized.LaunchArgs
 	}
-	eng, err := engine.StartWithArgs(profile, binaryPath, modelPath, hw, optimizedArgs)
+	eng, err := engine.StartWithArgs(profile, binaryPath, modelPath, hw, optimizedArgs, host)
 	if err != nil {
 		return fmt.Errorf("failed to start llama-server: %w", err)
 	}
