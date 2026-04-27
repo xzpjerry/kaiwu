@@ -166,6 +166,7 @@ CPU-only inference is supported but not the focus.
 
 ### v0.2.2 — Blackwell OOM fix + MoE VRAM optimization + --host flag
 - Fixed RTX 50-series (SM120) OOM on all context sizes: `--kv-unified` causes massive VRAM over-allocation with CUDA 12.4 binary on CUDA 13.x driver. Now skipped on Blackwell — llama.cpp uses paged KV allocation instead (grows on demand)
+- Fixed RTX 50-series startup timeout being misidentified as OOM: CUDA 12.4 binary on SM120 needs PTX JIT compilation (~60s), old 90s timeout caused false OOM → ctx halving loop. Now 180s for Blackwell, with distinct error message so `isLikelyOOM` won't trigger ctx retry
 - Warmup start point on Blackwell changed from `ideal×2` to `ideal` — the aggressive headroom caused all 8 probes to OOM before finding a working config
 - MoE VRAM reserve changed from hardcoded 1536MB to dynamic calculation (`model_size × 0.30`). After warmup, measured VRAM is written back for even more accurate KV cache type selection. Fixes users seeing 4GB+ unused VRAM while stuck on small ctx
 - iso3 detection no longer depends on `.kaiwu` marker file — `EnsureBinary` returns `isTurboQuant` directly (bundled = turboquant, downloaded = not)

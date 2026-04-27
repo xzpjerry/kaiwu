@@ -94,7 +94,7 @@ func StartWithArgs(profile *model.DeployProfile, binaryPath, modelPath string, h
 		}
 	}
 
-	return launchProcess(profile, binaryPath, args, actualPort)
+	return launchProcess(profile, binaryPath, args, actualPort, hw.ClusterCaps().HasBlackwell)
 }
 
 // startOnce 单次启动尝试
@@ -110,11 +110,11 @@ func startOnce(profile *model.DeployProfile, binaryPath, modelPath string, hw *h
 	}
 
 	args := buildArgs(profile, modelPath, actualPort, hw, ctxSize, host)
-	return launchProcess(profile, binaryPath, args, actualPort)
+	return launchProcess(profile, binaryPath, args, actualPort, hw.ClusterCaps().HasBlackwell)
 }
 
 // launchProcess 启动 llama-server 进程并等待就绪
-func launchProcess(profile *model.DeployProfile, binaryPath string, args []string, port int) (*RunningEngine, error) {
+func launchProcess(profile *model.DeployProfile, binaryPath string, args []string, port int, isBlackwell bool) (*RunningEngine, error) {
 	logPath := filepath.Join(config.LogDir(), fmt.Sprintf("llama-server-%d.log", time.Now().Unix()))
 	logFile, err := os.Create(logPath)
 	if err != nil {
@@ -156,7 +156,11 @@ func launchProcess(profile *model.DeployProfile, binaryPath string, args []strin
 	fmt.Printf("Waiting for llama-server to be ready (port %d)...\n", port)
 
 	// 等待就绪，同时监控进程是否提前退出（OOM 等）
+	// Blackwell (SM120) 首次启动需要 PTX JIT 编译 30-60s，延长超时避免误判 OOM
 	timeout := 90 * time.Second
+	if isBlackwell {
+		timeout = 180 * time.Second
+	}
 	deadline := time.After(timeout)
 	tick := time.NewTicker(500 * time.Millisecond)
 	defer tick.Stop()
@@ -170,6 +174,9 @@ func launchProcess(profile *model.DeployProfile, binaryPath string, args []strin
 			return nil, fmt.Errorf("llama-server exited during startup:\n%s", logContent)
 		case <-deadline:
 			Stop()
+			if isBlackwell {
+				return nil, fmt.Errorf("llama-server startup timeout (%s) — RTX 50系首次启动需JIT编译(~60s)，请重试", timeout)
+			}
 			return nil, fmt.Errorf("llama-server failed to start within %s", timeout)
 		case <-tick.C:
 			if isPortReady("127.0.0.1", port) {
