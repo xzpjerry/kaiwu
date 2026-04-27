@@ -262,9 +262,8 @@ func (p *HardwareProbe) Fingerprint() string {
 		return fmt.Sprintf("cpu_%dmb_%s", p.RAM.Total_MB, p.RAM.Type)
 	}
 
-	// Remove dots from compute cap: "8.9" -> "89"
-	cc := gpu.ComputeCap
-	cc = cc[:len(cc)-2] + cc[len(cc)-1:]
+	// Remove dots from compute cap: "8.9" -> "89", "6.1" -> "61"
+	cc := strings.ReplaceAll(gpu.ComputeCap, ".", "")
 
 	if len(p.GPUs) > 1 {
 		return fmt.Sprintf("sm%s_%dx%dmb_%s", cc, len(p.GPUs), gpu.VRAM_MB, p.RAM.Type)
