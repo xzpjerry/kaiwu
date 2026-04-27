@@ -164,6 +164,9 @@ CPU-only inference is supported but not the focus.
 
 ## Changelog
 
+### v0.2.3 — Fix Blackwell startup timeout misidentified as OOM
+- RTX 50-series startup timeout (90s) was too short for PTX JIT compilation (~60s) — timeout error was caught by `isLikelyOOM()` → false ctx-halving loop → 3 failures. Now 180s for Blackwell with distinct error message
+
 ### v0.2.2 — Blackwell OOM fix + MoE VRAM optimization + --host flag
 - Fixed RTX 50-series (SM120) OOM on all context sizes: `--kv-unified` causes massive VRAM over-allocation with CUDA 12.4 binary on CUDA 13.x driver. Now skipped on Blackwell — llama.cpp uses paged KV allocation instead (grows on demand)
 - Fixed RTX 50-series startup timeout being misidentified as OOM: CUDA 12.4 binary on SM120 needs PTX JIT compilation (~60s), old 90s timeout caused false OOM → ctx halving loop. Now 180s for Blackwell, with distinct error message so `isLikelyOOM` won't trigger ctx retry
@@ -391,6 +394,9 @@ kaiwu inject
 | `version` | 显示版本号 |
 
 ## 版本历史
+
+### v0.2.3 — 修复 Blackwell 启动超时被误判为 OOM
+- RTX 50 系启动超时（90s）不够 PTX JIT 编译（~60s），超时错误被 `isLikelyOOM()` 捕获 → ctx 减半重试循环 → 三次全失败。Blackwell 现在 180s 超时，错误信息与 OOM 区分开
 
 ### v0.2.2 — Blackwell OOM 修复 + --host 参数
 - 修复 RTX 50 系（SM120）所有上下文大小都 OOM 的问题：`--kv-unified` 在 CUDA 12.4 binary + CUDA 13.x 驱动下会过度分配显存。Blackwell 现在跳过此参数，llama.cpp 改用分页式 KV 分配（按需增长）
