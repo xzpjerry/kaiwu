@@ -491,8 +491,9 @@ func BuildArgs(profile *model.DeployProfile, binaryPath, modelPath string, port 
 	}
 
 	// Multi-GPU: NVLink + graph support → graph split mode; otherwise → weighted tensor-split
+	// MoE models: skip -sm graph (tensor parallel causes expert buffer explosion), use layer split
 	if hw.GPUCount() > 1 {
-		if hw.HasNVLink() && engine.SupportsGraphSplit(binaryPath) {
+		if hw.HasNVLink() && engine.SupportsGraphSplit(binaryPath) && profile.Arch != "moe" {
 			args = append(args, "-sm", "graph")
 		} else if ts := hw.TensorSplitArg(); ts != "" {
 			args = append(args, "--tensor-split", ts)
@@ -567,6 +568,10 @@ func startBenchServer(binaryPath string, args []string, port int) (*os.Process, 
 	cmd.Env = append(os.Environ(),
 		"LD_LIBRARY_PATH="+binaryDir+":"+os.Getenv("LD_LIBRARY_PATH"),
 	)
+	// MoE + multi-GPU: disable CUDA graph capture to avoid memory leak (llama.cpp #20315)
+	if containsFlag(args, "--n-cpu-moe", "--cpu-moe") {
+		cmd.Env = append(cmd.Env, "GGML_CUDA_DISABLE_GRAPHS=1")
+	}
 	if logFile != nil {
 		cmd.Stdout = logFile
 		cmd.Stderr = logFile
@@ -798,6 +803,18 @@ func shouldMmap(hw *hardware.HardwareProbe, profile *model.DeployProfile) bool {
 	freeMB := float64(hw.RAM.Free_MB)
 	modelMB := profile.Size_GB * 1024
 	return modelMB < freeMB*0.7
+}
+
+// containsFlag checks if any of the given flags appear in args.
+func containsFlag(args []string, flags ...string) bool {
+	for _, a := range args {
+		for _, f := range flags {
+			if a == f {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // fmtCtx formats a ctx size for human display: "8K", "12K", "65536" etc.

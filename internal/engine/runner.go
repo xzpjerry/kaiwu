@@ -134,6 +134,10 @@ func launchProcess(profile *model.DeployProfile, binaryPath string, args []strin
 		filterEnvVar(os.Environ(), "CUDA_VISIBLE_DEVICES"),
 		"LD_LIBRARY_PATH="+ldPath,
 	)
+	// MoE + multi-GPU: disable CUDA graph capture to avoid memory leak (llama.cpp #20315)
+	if isBlackwell || (len(args) > 0 && containsFlag(args, "--n-cpu-moe", "--cpu-moe")) {
+		cmd.Env = append(cmd.Env, "GGML_CUDA_DISABLE_GRAPHS=1")
+	}
 	cmd.Stdout = logFile
 	cmd.Stderr = logFile
 	setProcAttr(cmd)
@@ -212,6 +216,11 @@ func isLikelyOOM(err error) bool {
 	if strings.Contains(msg, "startup timeout") {
 		return false
 	}
+	// Missing shared library: not OOM, binary can't load dependencies
+	if strings.Contains(msg, "error while loading shared libraries") ||
+		strings.Contains(msg, "cannot open shared object file") {
+		return false
+	}
 	return strings.Contains(msg, "exited during startup") ||
 		strings.Contains(msg, "CUDA out of memory") ||
 		strings.Contains(msg, "ggml_cuda") ||
@@ -243,6 +252,18 @@ func filterEnvVar(env []string, key string) []string {
 		}
 	}
 	return result
+}
+
+// containsFlag checks if any of the given flags appear in args.
+func containsFlag(args []string, flags ...string) bool {
+	for _, a := range args {
+		for _, f := range flags {
+			if a == f {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // isPortReady 检查端口是否可连接
@@ -355,8 +376,9 @@ func buildArgs(profile *model.DeployProfile, binaryPath, modelPath string, port 
 	}
 
 	// Multi-GPU: NVLink + graph support → graph split mode; otherwise → weighted tensor-split
+	// MoE models: skip -sm graph (tensor parallel causes expert buffer explosion), use layer split
 	if hw.GPUCount() > 1 {
-		if hw.HasNVLink() && SupportsGraphSplit(binaryPath) {
+		if hw.HasNVLink() && SupportsGraphSplit(binaryPath) && profile.Arch != "moe" {
 			args = append(args, "-sm", "graph")
 		} else if ts := hw.TensorSplitArg(); ts != "" {
 			args = append(args, "--tensor-split", ts)
