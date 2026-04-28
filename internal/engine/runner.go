@@ -307,8 +307,9 @@ func buildArgs(profile *model.DeployProfile, modelPath string, port int, hw *har
 	}
 
 	// --kv-unified: pre-allocate KV cache as one contiguous block.
-	// Blackwell (SM120) + CUDA 12.4 binary on CUDA 13.x driver causes massive over-allocation → OOM.
-	if !hw.ClusterCaps().HasBlackwell {
+	// Skip on: (1) Blackwell — CUDA 12.4 binary on 13.x driver over-allocates
+	//          (2) Multi-GPU — unified KV lands entirely on GPU 0, causing OOM
+	if !hw.ClusterCaps().HasBlackwell && hw.GPUCount() <= 1 {
 		args = append(args, "--kv-unified")
 	}
 
