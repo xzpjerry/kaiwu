@@ -164,13 +164,21 @@ CPU-only inference is supported but not the focus.
 
 ## Changelog
 
-### v0.2.3 — Fix Blackwell startup timeout misidentified as OOM
-- RTX 50-series startup timeout (90s) was too short for PTX JIT compilation (~60s) — timeout error was caught by `isLikelyOOM()` → false ctx-halving loop → 3 failures. Now 180s for Blackwell with distinct error message
-
 ### v0.2.7 — Blackwell JIT warmup (permanent fix for startup timeout)
 - RTX 50-series first run now executes `llama-server --version` to trigger PTX JIT compilation and populate CUDA cache. All subsequent launches (warmup probes + final start) read from cache and start in ~2s
 - No longer relies on extending timeouts to "hope" JIT finishes in time — JIT warmup runs once, result persists on disk across reboots
 - Multi-GPU `--kv-unified` skip also included (v0.2.6 fix)
+
+### v0.2.6 — Fix multi-GPU OOM (--kv-unified lands on GPU 0 only)
+- `--kv-unified` allocates entire KV cache on a single device (GPU 0). On dual 3090, model splits across both cards but KV cache all goes to GPU 0 → OOM. Now skipped when GPUCount > 1
+
+### v0.2.5 — (same as v0.2.6, tag issue)
+
+### v0.2.4 — Fix panic on older GPUs (P6000, Tesla, etc.)
+- `Fingerprint()` used hardcoded slice indices to remove dot from `ComputeCap` — panics on empty string. Replaced with `strings.ReplaceAll`
+
+### v0.2.3 — Fix Blackwell startup timeout misidentified as OOM
+- RTX 50-series startup timeout (90s) was too short for PTX JIT compilation (~60s) — timeout error was caught by `isLikelyOOM()` → false ctx-halving loop → 3 failures. Now 180s for Blackwell with distinct error message
 
 ### v0.2.2 — Blackwell OOM fix + MoE VRAM optimization + --host flag
 - Fixed RTX 50-series (SM120) OOM on all context sizes: `--kv-unified` causes massive VRAM over-allocation with CUDA 12.4 binary on CUDA 13.x driver. Now skipped on Blackwell — llama.cpp uses paged KV allocation instead (grows on demand)
