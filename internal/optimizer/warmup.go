@@ -454,6 +454,19 @@ func BuildArgs(profile *model.DeployProfile, modelPath string, port int, hw *har
 		args = append(args, "--mmap")
 	}
 
+	// MTP speculative decoding: Qwen3.6 models have native MTP heads, 40-80% speed boost
+	if profile.NativeMTP {
+		args = append(args, "--num-speculative-tokens", "3")
+	}
+
+	// N-gram lookup: zero-cost speculative decoding for models without MTP
+	if !profile.NativeMTP {
+		args = append(args, "--lookup", "8")
+	}
+
+	// KV cache defragmentation: auto-compact when fragmentation > 10%
+	args = append(args, "--defrag-thold", "0.1")
+
 	return args
 }
 
