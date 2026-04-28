@@ -1,6 +1,7 @@
 package optimizer
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -111,6 +112,15 @@ func Warmup(profile *model.DeployProfile, binaryPath, modelPath string, hw *hard
 
 	cfg, _ := config.Load()
 	port := cfg.LlamaPort + 10
+
+	// Blackwell JIT warmup: first run of CUDA 12.4 binary on SM120 needs PTX JIT compilation (~60s).
+	// We run llama-server --version once to trigger JIT and populate the CUDA cache.
+	// Subsequent launches (all probes + final start) will be fast (~2s).
+	if hw.ClusterCaps().HasBlackwell {
+		if err := ensureCUDAJITCache(binaryPath); err != nil {
+			fmt.Printf("      ⚠  JIT 预热失败: %v\n", err)
+		}
+	}
 
 	// RAM safety check
 	if warning := checkRAMSafety(hw, profile); warning != "" {
@@ -500,7 +510,7 @@ func startBenchServer(binaryPath string, args []string, port int) (*os.Process, 
 	}()
 
 	// Wait for health endpoint
-	deadline := time.Now().Add(180 * time.Second) // MoE models need longer to load (~13GB from RAM)
+	deadline := time.Now().Add(180 * time.Second)
 	for time.Now().Before(deadline) {
 		resp, err := http.Get(fmt.Sprintf("http://127.0.0.1:%d/health", port))
 		if err == nil {
@@ -717,6 +727,34 @@ func fmtCtx(ctx int) string {
 		return fmt.Sprintf("%dK", ctx/1024)
 	}
 	return strconv.Itoa(ctx)
+}
+
+// ensureCUDAJITCache runs llama-server --version to trigger PTX JIT compilation on Blackwell.
+// CUDA driver caches compiled kernels to disk (%APPDATA%\NVIDIA\ComputeCache on Windows,
+// ~/.nv/ComputeCache on Linux). After this completes, all subsequent launches are fast (~2s).
+// Only needed once per binary — the cache persists across reboots.
+func ensureCUDAJITCache(binaryPath string) error {
+	// Check if JIT cache marker exists (skip if already warmed)
+	markerPath := filepath.Join(config.Dir(), "jit_warmed_"+filepath.Base(binaryPath))
+	if _, err := os.Stat(markerPath); err == nil {
+		return nil // already warmed
+	}
+
+	fmt.Printf("      RTX 50 系首次运行，正在编译 CUDA 内核（约 60s，仅需一次）...\n")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, binaryPath, "--version")
+	err := cmd.Run()
+	if ctx.Err() == context.DeadlineExceeded {
+		return fmt.Errorf("JIT compilation timed out (120s)")
+	}
+
+	// Write marker so we don't repeat this
+	os.WriteFile(markerPath, []byte("1"), 0644)
+	fmt.Printf("      ✓ CUDA 内核编译完成，后续启动将秒开\n")
+	return err
 }
 
 // extractArgValue extracts the value of a flag from args (e.g., "--ctx-size" → "8K")
