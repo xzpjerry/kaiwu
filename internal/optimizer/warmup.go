@@ -562,6 +562,11 @@ func startBenchServer(binaryPath string, args []string, port int) (*os.Process, 
 	}
 
 	cmd := exec.Command(binaryPath, args...)
+	// Set LD_LIBRARY_PATH to binary's directory so libmtmd.so/libllama.so are found
+	binaryDir := filepath.Dir(binaryPath)
+	cmd.Env = append(os.Environ(),
+		"LD_LIBRARY_PATH="+binaryDir+":"+os.Getenv("LD_LIBRARY_PATH"),
+	)
 	if logFile != nil {
 		cmd.Stdout = logFile
 		cmd.Stderr = logFile

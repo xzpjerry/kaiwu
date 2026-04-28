@@ -122,9 +122,18 @@ func launchProcess(profile *model.DeployProfile, binaryPath string, args []strin
 	}
 
 	cmd := exec.Command(binaryPath, args...)
-	// Remove CUDA_VISIBLE_DEVICES from environment so llama-server discovers all GPUs.
-	// Some container/orchestration tools set this to a single GPU, breaking multi-GPU inference.
-	cmd.Env = filterEnvVar(os.Environ(), "CUDA_VISIBLE_DEVICES")
+	// Remove CUDA_VISIBLE_DEVICES so llama-server discovers all GPUs.
+	// Set LD_LIBRARY_PATH to binary's directory so libmtmd.so/libllama.so are found.
+	binaryDir := filepath.Dir(binaryPath)
+	existingLD := os.Getenv("LD_LIBRARY_PATH")
+	ldPath := binaryDir
+	if existingLD != "" {
+		ldPath = binaryDir + ":" + existingLD
+	}
+	cmd.Env = append(
+		filterEnvVar(os.Environ(), "CUDA_VISIBLE_DEVICES"),
+		"LD_LIBRARY_PATH="+ldPath,
+	)
 	cmd.Stdout = logFile
 	cmd.Stderr = logFile
 	setProcAttr(cmd)
