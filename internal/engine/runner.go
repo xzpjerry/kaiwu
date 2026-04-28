@@ -122,6 +122,9 @@ func launchProcess(profile *model.DeployProfile, binaryPath string, args []strin
 	}
 
 	cmd := exec.Command(binaryPath, args...)
+	// Remove CUDA_VISIBLE_DEVICES from environment so llama-server discovers all GPUs.
+	// Some container/orchestration tools set this to a single GPU, breaking multi-GPU inference.
+	cmd.Env = filterEnvVar(os.Environ(), "CUDA_VISIBLE_DEVICES")
 	cmd.Stdout = logFile
 	cmd.Stderr = logFile
 	setProcAttr(cmd)
@@ -207,6 +210,19 @@ func readLastLines(path string, n int) string {
 		lines = lines[len(lines)-n:]
 	}
 	return strings.Join(lines, "\n")
+}
+
+// filterEnvVar removes a specific environment variable from the env slice.
+// Used to strip CUDA_VISIBLE_DEVICES so llama-server discovers all GPUs.
+func filterEnvVar(env []string, key string) []string {
+	prefix := key + "="
+	result := make([]string, 0, len(env))
+	for _, e := range env {
+		if !strings.HasPrefix(e, prefix) {
+			result = append(result, e)
+		}
+	}
+	return result
 }
 
 // isPortReady 检查端口是否可连接
