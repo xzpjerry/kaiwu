@@ -19,24 +19,42 @@ import (
 	"github.com/val1813/kaiwu/internal/model"
 )
 
-// minAcceptableTPS is the minimum decode speed for acceptable user experience.
-// Only applies to full_gpu mode — MoE offload uses threshold=0 (find largest ctx regardless of speed).
-const minAcceptableTPS = 18.0
-
 // maxUpwardProbes limits how many times we double ctx after the first success.
 // Prevents 8K→16K→32K→64K→128K→256K chains on large VRAM (each costs 30-60s).
 const maxUpwardProbes = 3
 
+// minContextTPS is the minimum speed for the "context" mode to be usable.
+const minContextTPS = 15.0
+
+// ProbeResult stores one warmup probe measurement.
+type ProbeResult struct {
+	Ctx  int
+	TPS  float64
+	Args []string
+	VRAM int
+	OOM  bool
+}
+
+// ModeProfile stores one of the three mode options.
+type ModeProfile struct {
+	Priority string   `json:"priority"` // "speed" / "balanced" / "context"
+	CtxSize  int      `json:"ctx_size"`
+	TPS      float64  `json:"tps"`
+	Args     []string `json:"args"`
+}
+
 // OptimizedProfile is the result of warmup benchmark
 type OptimizedProfile struct {
-	ModelID     string   `json:"model_id"`
-	HardwareFP  string   `json:"hardware_fp"`
-	Quant       string   `json:"quant"`
-	Mode        string   `json:"mode"`
-	MeasuredTPS float64  `json:"measured_tps"`
-	VRAMUsed_MB int      `json:"vram_used_mb"`
-	LaunchArgs  []string `json:"launch_args"`
-	CreatedAt   string   `json:"created_at"`
+	ModelID     string        `json:"model_id"`
+	HardwareFP  string        `json:"hardware_fp"`
+	Quant       string        `json:"quant"`
+	Mode        string        `json:"mode"`
+	Priority    string        `json:"priority"`           // current selected mode
+	MeasuredTPS float64       `json:"measured_tps"`
+	VRAMUsed_MB int           `json:"vram_used_mb"`
+	LaunchArgs  []string      `json:"launch_args"`
+	Profiles    []ModeProfile `json:"profiles,omitempty"` // three mode options
+	CreatedAt   string        `json:"created_at"`
 }
 
 // ClearProfileCache deletes the cached profile for a given model+hardware combo.
@@ -78,9 +96,19 @@ func ClearProfileCache(modelID string, hw *hardware.HardwareProbe) error {
 // │                                                                 │
 // │ 5. Save profile to cache                                        │
 // └─────────────────────────────────────────────────────────────────┘
-func Warmup(profile *model.DeployProfile, binaryPath, modelPath string, hw *hardware.HardwareProbe, fast bool) (*OptimizedProfile, error) {
+func Warmup(profile *model.DeployProfile, binaryPath, modelPath string, hw *hardware.HardwareProbe, fast bool, modeOverride string) (*OptimizedProfile, error) {
 	fingerprint := hw.Fingerprint()
 	profilePath := filepath.Join(config.ProfileDir(), fmt.Sprintf("%s_%s.json", profile.ModelID, fingerprint))
+
+	// Determine preferred priority
+	cfg, _ := config.Load()
+	priority := cfg.Priority
+	if priority == "" {
+		priority = "balanced"
+	}
+	if modeOverride != "" {
+		priority = modeOverride
+	}
 
 	// User specified --ctx-size → skip cache, use their value directly
 	if profile.CtxOverride > 0 {
@@ -89,18 +117,38 @@ func Warmup(profile *model.DeployProfile, binaryPath, modelPath string, hw *hard
 		// Check cache (spec: second launch should be 2s)
 		if cached, err := loadCachedProfile(profilePath); err == nil {
 			if isCacheValid(cached, fingerprint) {
-				created, _ := time.Parse(time.RFC3339, cached.CreatedAt)
-				age := time.Since(created)
-				ageStr := fmt.Sprintf("%.0f 天前", age.Hours()/24)
-				if age.Hours() < 24 {
-					ageStr = fmt.Sprintf("%.0f 小时前", age.Hours())
+				// If cache has Profiles and user wants a different mode, switch without re-warmup
+				if len(cached.Profiles) > 0 && modeOverride != "" {
+					for _, mp := range cached.Profiles {
+						if mp.Priority == modeOverride {
+							cached.Priority = modeOverride
+							cached.MeasuredTPS = mp.TPS
+							cached.LaunchArgs = mp.Args
+							saveProfile(cached, profilePath)
+							fmt.Printf("      切换到%s模式（%s ctx · %.1f tok/s）\n", modeName(modeOverride), fmtCtx(mp.CtxSize), mp.TPS)
+							return cached, nil
+						}
+					}
 				}
-				// Extract ctx from cached args for display
-				cachedCtx := extractArgValue(cached.LaunchArgs, "--ctx-size")
-				fmt.Printf("      使用上次配置（%s ctx · %.1f tok/s · %s）\n", cachedCtx, cached.MeasuredTPS, ageStr)
-				return cached, nil
+				// Use cached profile as-is
+				if len(cached.Profiles) == 0 {
+					// Old cache without Profiles → re-warmup
+					fmt.Printf("      旧缓存格式，重新探测\n")
+				} else {
+					created, _ := time.Parse(time.RFC3339, cached.CreatedAt)
+					age := time.Since(created)
+					ageStr := fmt.Sprintf("%.0f 天前", age.Hours()/24)
+					if age.Hours() < 24 {
+						ageStr = fmt.Sprintf("%.0f 小时前", age.Hours())
+					}
+					cachedCtx := extractArgValue(cached.LaunchArgs, "--ctx-size")
+					fmt.Printf("      使用上次配置（%s ctx · %.1f tok/s · %s模式 · %s）\n", cachedCtx, cached.MeasuredTPS, modeName(cached.Priority), ageStr)
+					fmt.Printf("      提示: kaiwu run model --mode speed/balanced/context 切换模式\n")
+					return cached, nil
+				}
+			} else {
+				fmt.Printf("      Cache expired, re-running warmup\n")
 			}
-			fmt.Printf("      Cache expired, re-running warmup\n")
 		}
 	}
 
@@ -110,7 +158,6 @@ func Warmup(profile *model.DeployProfile, binaryPath, modelPath string, hw *hard
 		return nil, fmt.Errorf("no cached profile available")
 	}
 
-	cfg, _ := config.Load()
 	port := cfg.LlamaPort + 10
 
 	// Blackwell JIT warmup: first run of CUDA 12.4 binary on SM120 needs PTX JIT compilation (~60s).
@@ -138,14 +185,10 @@ func Warmup(profile *model.DeployProfile, binaryPath, modelPath string, hw *hard
 		batchSize, ubatchSize = 4096, 512
 	}
 
-	// full_gpu: speed correlates with ctx size, threshold finds the speed/ctx balance point.
-	// moe_offload: speed is PCIe-bandwidth-limited, not ctx-limited. Dropping ctx from 128K
-	// to 4K only improves speed by ~20-30%, never enough to cross a 18 tok/s threshold.
-	// Disable the threshold for MoE — just find the largest ctx that fits in VRAM.
-	tpsThreshold := minAcceptableTPS
-	if profile.Mode == "moe_offload" {
-		tpsThreshold = 0
-	}
+	// Phase 1 now collects ALL successful probes (no threshold filtering).
+	// Three modes are derived from the collected data points after probing.
+	// MoE: speed doesn't vary with ctx (PCIe-bound), so just find max ctx.
+	var probeResults []ProbeResult
 
 	var bestCtx int
 	var bestTPS float64
@@ -205,6 +248,7 @@ func Warmup(profile *model.DeployProfile, binaryPath, modelPath string, hw *hard
 			if err != nil {
 				// OOM: record ceiling, halve and retry downward
 				fmt.Printf("OOM\n")
+				probeResults = append(probeResults, ProbeResult{Ctx: ctxTry, OOM: true})
 				if failedCtx == 0 || ctxTry < failedCtx {
 					failedCtx = ctxTry
 				}
@@ -218,34 +262,16 @@ func Warmup(profile *model.DeployProfile, binaryPath, modelPath string, hw *hard
 				continue
 			}
 
-			if tps < tpsThreshold {
-				// Too slow: record ceiling, keep as fallback, halve
-				fmt.Printf("%.1f tok/s (< %.0f, too slow)\n", tps, tpsThreshold)
-				if failedCtx == 0 || ctxTry < failedCtx {
-					failedCtx = ctxTry
-				}
-				if bestCtx == 0 || tps > bestTPS {
-					bestCtx = ctxTry
-					bestTPS = tps
-					bestArgs = args
-					bestVRAM = vram
-				}
-				ctxTry /= 2
-				if ctxTry < 4096 {
-					ctxTry = 4096
-				}
-				if ctxTry == 4096 && attempt > 1 {
-					break
-				}
-				continue
-			}
-
-			// Success: speed >= threshold
+			// Success: record probe result
 			fmt.Printf("%.1f tok/s\n", tps)
-			bestCtx = ctxTry
-			bestTPS = tps
-			bestArgs = args
-			bestVRAM = vram
+			probeResults = append(probeResults, ProbeResult{Ctx: ctxTry, TPS: tps, Args: args, VRAM: vram})
+
+			if bestCtx == 0 || ctxTry > bestCtx {
+				bestCtx = ctxTry
+				bestTPS = tps
+				bestArgs = args
+				bestVRAM = vram
+			}
 
 			// Try doubling to find the ceiling (max 3 upward probes)
 			if failedCtx == 0 && ctxTry < nativeMax && upwardProbes < maxUpwardProbes {
@@ -263,7 +289,7 @@ func Warmup(profile *model.DeployProfile, binaryPath, modelPath string, hw *hard
 		}
 
 		// --- Phase 1.5: fine search (4K precision binary search) ---
-		// Between bestCtx (works) and failedCtx (too slow/OOM), find the real max.
+		// Between bestCtx (works) and failedCtx (OOM), find the real max.
 		if bestCtx > 0 && failedCtx > bestCtx {
 			lo := bestCtx
 			hi := failedCtx
@@ -277,15 +303,12 @@ func Warmup(profile *model.DeployProfile, binaryPath, modelPath string, hw *hard
 				tps, vram, err := runBenchmarkRound(binaryPath, args, port)
 				if err != nil {
 					fmt.Printf("OOM\n")
-					hi = mid
-					continue
-				}
-				if tps < tpsThreshold {
-					fmt.Printf("%.1f tok/s (too slow)\n", tps)
+					probeResults = append(probeResults, ProbeResult{Ctx: mid, OOM: true})
 					hi = mid
 					continue
 				}
 				fmt.Printf("%.1f tok/s\n", tps)
+				probeResults = append(probeResults, ProbeResult{Ctx: mid, TPS: tps, Args: args, VRAM: vram})
 				lo = mid
 				bestCtx = mid
 				bestTPS = tps
@@ -343,15 +366,47 @@ func Warmup(profile *model.DeployProfile, binaryPath, modelPath string, hw *hard
 		fmt.Printf("      ℹ MoE offload · speed limited by PCIe bandwidth, not context size\n")
 	}
 
+	// --- Derive three mode profiles from probe results ---
+	modes := deriveModeProfiles(probeResults, profile, modelPath, port, hw, batchSize, ubatchSize)
+
+	// MoE or only one distinct ctx → skip selection, use context mode
+	if profile.Mode == "moe_offload" || len(modes) <= 1 {
+		if len(modes) == 0 {
+			modes = []ModeProfile{{Priority: "balanced", CtxSize: bestCtx, TPS: bestTPS, Args: bestArgs}}
+		}
+		priority = modes[len(modes)-1].Priority // use largest ctx
+	} else {
+		// Interactive selection
+		priority = promptModeSelection(modes, priority)
+	}
+
+	// Find selected mode's data
+	var selectedMode *ModeProfile
+	for i := range modes {
+		if modes[i].Priority == priority {
+			selectedMode = &modes[i]
+			break
+		}
+	}
+	if selectedMode == nil {
+		selectedMode = &ModeProfile{Priority: priority, CtxSize: bestCtx, TPS: bestTPS, Args: bestArgs}
+	}
+
+	// Save priority to config
+	cfg.Priority = priority
+	config.Save(cfg)
+
 	// Save profile
 	optimized := &OptimizedProfile{
 		ModelID:     profile.ModelID,
 		HardwareFP:  fingerprint,
 		Quant:       profile.Quant,
 		Mode:        profile.Mode,
-		MeasuredTPS: bestTPS,
+		Priority:    priority,
+		MeasuredTPS: selectedMode.TPS,
 		VRAMUsed_MB: bestVRAM,
-		LaunchArgs:  bestArgs,
+		LaunchArgs:  selectedMode.Args,
+		Profiles:    modes,
 		CreatedAt:   time.Now().Format(time.RFC3339),
 	}
 
@@ -784,4 +839,166 @@ func extractArgValue(args []string, flag string) string {
 		}
 	}
 	return ""
+}
+
+// deriveModeProfiles computes three mode options from probe results.
+// speed: smallest successful ctx (fastest TPS)
+// balanced: largest ctx where TPS >= peakTPS * 0.7
+// context: largest ctx where TPS >= 15 tok/s
+func deriveModeProfiles(results []ProbeResult, profile *model.DeployProfile, modelPath string, port int, hw *hardware.HardwareProbe, batchSize, ubatchSize int) []ModeProfile {
+	// Filter successful probes, sort by ctx ascending
+	var successes []ProbeResult
+	for _, r := range results {
+		if !r.OOM && r.TPS > 0 {
+			successes = append(successes, r)
+		}
+	}
+	if len(successes) == 0 {
+		return nil
+	}
+
+	// Sort by ctx ascending (smallest first)
+	for i := 0; i < len(successes)-1; i++ {
+		for j := i + 1; j < len(successes); j++ {
+			if successes[j].Ctx < successes[i].Ctx {
+				successes[i], successes[j] = successes[j], successes[i]
+			}
+		}
+	}
+
+	// Find peak TPS (smallest ctx = fastest)
+	peakTPS := successes[0].TPS
+	for _, r := range successes {
+		if r.TPS > peakTPS {
+			peakTPS = r.TPS
+		}
+	}
+
+	// Speed mode: highest TPS probe
+	speedProbe := successes[0]
+	for _, r := range successes {
+		if r.TPS > speedProbe.TPS {
+			speedProbe = r
+		}
+	}
+
+	// Balanced mode: largest ctx where TPS >= peakTPS * 0.7
+	balancedThreshold := peakTPS * 0.7
+	balancedProbe := speedProbe // fallback to speed
+	for _, r := range successes {
+		if r.TPS >= balancedThreshold && r.Ctx > balancedProbe.Ctx {
+			balancedProbe = r
+		}
+	}
+
+	// Context mode: largest ctx where TPS >= 15 tok/s
+	var contextProbe *ProbeResult
+	for i := len(successes) - 1; i >= 0; i-- {
+		if successes[i].TPS >= minContextTPS {
+			contextProbe = &successes[i]
+			break
+		}
+	}
+
+	// Build modes list, dedup by ctx
+	var modes []ModeProfile
+	seen := make(map[int]bool)
+
+	// Always add speed
+	modes = append(modes, ModeProfile{
+		Priority: "speed",
+		CtxSize:  speedProbe.Ctx,
+		TPS:      speedProbe.TPS,
+		Args:     speedProbe.Args,
+	})
+	seen[speedProbe.Ctx] = true
+
+	// Add balanced if different from speed
+	if !seen[balancedProbe.Ctx] {
+		modes = append(modes, ModeProfile{
+			Priority: "balanced",
+			CtxSize:  balancedProbe.Ctx,
+			TPS:      balancedProbe.TPS,
+			Args:     balancedProbe.Args,
+		})
+		seen[balancedProbe.Ctx] = true
+	} else {
+		// balanced same as speed, mark speed as balanced too
+		modes[0].Priority = "balanced"
+	}
+
+	// Add context if different and exists
+	if contextProbe != nil && !seen[contextProbe.Ctx] {
+		modes = append(modes, ModeProfile{
+			Priority: "context",
+			CtxSize:  contextProbe.Ctx,
+			TPS:      contextProbe.TPS,
+			Args:     contextProbe.Args,
+		})
+	}
+
+	return modes
+}
+
+// promptModeSelection displays the three modes and asks user to choose.
+// Returns the selected priority string. Defaults to defaultPriority after 10s.
+func promptModeSelection(modes []ModeProfile, defaultPriority string) string {
+	fmt.Println()
+	fmt.Println("      ┌─ 选择模式 ─────────────────────────────────────┐")
+	for i, m := range modes {
+		rec := "  "
+		if m.Priority == defaultPriority || (defaultPriority == "balanced" && m.Priority == "balanced") {
+			rec = " ←"
+		}
+		fmt.Printf("      │  [%d] %-8s  %5s ctx · %5.1f tok/s %s      │\n",
+			i+1, modeName(m.Priority), fmtCtx(m.CtxSize), m.TPS, rec)
+	}
+	fmt.Println("      └────────────────────────────────────────────────┘")
+
+	// Find default index
+	defaultIdx := 0
+	for i, m := range modes {
+		if m.Priority == defaultPriority {
+			defaultIdx = i
+			break
+		}
+	}
+
+	fmt.Printf("      选择 (1-%d，10s 后默认 %d): ", len(modes), defaultIdx+1)
+
+	// Read with timeout
+	resultCh := make(chan int, 1)
+	go func() {
+		var input string
+		fmt.Scanln(&input)
+		input = strings.TrimSpace(input)
+		if n, err := strconv.Atoi(input); err == nil && n >= 1 && n <= len(modes) {
+			resultCh <- n - 1
+		} else {
+			resultCh <- defaultIdx
+		}
+	}()
+
+	select {
+	case idx := <-resultCh:
+		fmt.Printf("      ✓ 已选择: %s\n", modeName(modes[idx].Priority))
+		return modes[idx].Priority
+	case <-time.After(10 * time.Second):
+		fmt.Printf("\n      ✓ 默认: %s\n", modeName(modes[defaultIdx].Priority))
+		return modes[defaultIdx].Priority
+	}
+}
+
+// modeName returns Chinese display name for a priority.
+func modeName(priority string) string {
+	switch priority {
+	case "speed":
+		return "速度优先"
+	case "balanced":
+		return "均衡"
+	case "context":
+		return "上下文优先"
+	default:
+		return priority
+	}
 }

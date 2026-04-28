@@ -72,12 +72,13 @@ func newRunCmd() *cobra.Command {
 	var reset bool
 	var llamaServer string
 	var host string
+	var mode string
 	cmd := &cobra.Command{
 		Use:   "run <model>",
 		Short: "Deploy and start a model",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runModel(args[0], fast, bench, ctxSize, reset, llamaServer, host)
+			return runModel(args[0], fast, bench, ctxSize, reset, llamaServer, host, mode)
 		},
 	}
 	cmd.Flags().BoolVar(&fast, "fast", false, "Skip warmup, use cached profile")
@@ -90,6 +91,7 @@ func newRunCmd() *cobra.Command {
 	cmd.Flags().IntVar(&ctxSize, "ctx-size", 0, "手动指定上下文大小（0=自动）")
 	cmd.Flags().StringVar(&llamaServer, "llama-server", "", "使用自定义 llama-server 二进制（完整路径）")
 	cmd.Flags().StringVar(&host, "host", "127.0.0.1", "监听地址（默认 127.0.0.1，用 0.0.0.0 开放局域网）")
+	cmd.Flags().StringVar(&mode, "mode", "", "模式选择: speed/balanced/context（默认用上次选择）")
 	return cmd
 }
 
@@ -305,7 +307,7 @@ func showMainMenu() {
 	fmt.Println()
 }
 
-func runModel(modelName string, fast, bench bool, ctxSize int, reset bool, llamaServer string, host string) error {
+func runModel(modelName string, fast, bench bool, ctxSize int, reset bool, llamaServer string, host string, mode string) error {
 	printLogo()
 	fmt.Println()
 
@@ -443,7 +445,7 @@ func runModel(modelName string, fast, bench bool, ctxSize int, reset bool, llama
 			fmt.Printf("      已清除缓存，重新探测\n")
 		}
 	}
-	optimized, err := optimizer.Warmup(profile, binaryPath, modelPath, hw, fast)
+	optimized, err := optimizer.Warmup(profile, binaryPath, modelPath, hw, fast, mode)
 	if err != nil {
 		fmt.Printf("      ⚠️  Warmup failed: %v\n", err)
 		fmt.Printf("      Using default parameters\n")

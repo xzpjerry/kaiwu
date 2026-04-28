@@ -13,6 +13,7 @@ type Config struct {
 	ProxyPort int    `yaml:"proxy_port"`
 	LogLevel  string `yaml:"log_level"`
 	ModelDirOverride string `yaml:"model_dir,omitempty"` // 自定义模型存储路径，留空则用默认 ~/.kaiwu/models/
+	Priority string `yaml:"priority,omitempty"` // 模式偏好: speed/balanced/context，默认 balanced
 }
 
 var defaultConfig = Config{

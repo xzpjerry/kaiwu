@@ -164,6 +164,15 @@ CPU-only inference is supported but not the focus.
 
 ## Changelog
 
+### v0.2.8 — Three-mode selection + relative threshold (no more hardcoded 20 tok/s)
+- Warmup no longer filters by a fixed 18 tok/s threshold. Instead, collects all successful probe data points and derives three modes:
+  - Speed: fastest ctx (smallest ctx, highest tok/s)
+  - Balanced: largest ctx where TPS >= peak × 0.7
+  - Context: largest ctx where TPS >= 15 tok/s
+- Interactive selection after first warmup (10s timeout defaults to balanced), saved to config
+- Subsequent launches use cache; `--mode speed/balanced/context` switches without re-warmup
+- MoE mode or identical ctx across modes skips selection menu
+
 ### v0.2.7 — Blackwell JIT warmup (permanent fix for startup timeout)
 - RTX 50-series first run now executes `llama-server --version` to trigger PTX JIT compilation and populate CUDA cache. All subsequent launches (warmup probes + final start) read from cache and start in ~2s
 - No longer relies on extending timeouts to "hope" JIT finishes in time — JIT warmup runs once, result persists on disk across reboots
@@ -410,6 +419,15 @@ kaiwu inject
 
 ### v0.2.3 — 修复 Blackwell 启动超时被误判为 OOM
 - RTX 50 系启动超时（90s）不够 PTX JIT 编译（~60s），超时错误被 `isLikelyOOM()` 捕获 → ctx 减半重试循环 → 三次全失败。Blackwell 现在 180s 超时，错误信息与 OOM 区分开
+
+### v0.2.8 — 三档模式选择 + 相对阈值（不再写死 20 tok/s）
+- Warmup 不再用固定 18 tok/s 阈值过滤。改为收集所有成功的 probe 数据点，探测结束后推导三档：
+  - 速度优先：最快的 ctx（最小 ctx，最高 tok/s）
+  - 均衡：峰值速度 × 0.7 阈值下的最大 ctx
+  - 上下文优先：速度 ≥ 15 tok/s 的最大 ctx
+- 首次 warmup 后交互选择（10s 超时默认均衡），选择结果保存到 config
+- 下次启动直接用缓存，`--mode speed/balanced/context` 切换不需要重新 warmup
+- MoE 模式或三档 ctx 相同时跳过选择菜单
 
 ### v0.2.7 — Blackwell JIT 预热（彻底解决启动超时）
 - RTX 50 系首次运行时，先执行 `llama-server --version` 触发 PTX JIT 编译并写入 CUDA 缓存。后续所有启动秒开
