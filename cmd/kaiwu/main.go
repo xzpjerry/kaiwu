@@ -467,7 +467,7 @@ func runModel(modelName string, fast, bench bool, ctxSize int, reset bool, llama
 	fmt.Printf("      llama-server started (PID %d, port %d)\n", eng.PID, eng.Port)
 
 	// Start proxy
-	proxyServer := proxy.NewServer(cfg.ProxyPort, eng.Port, profile.ModelID)
+	proxyServer := proxy.NewServer(cfg.ProxyPort, eng.Port, profile.ModelID, host)
 	proxyServer.StartAsync()
 	fmt.Printf("      Kaiwu proxy started (port %d)\n", cfg.ProxyPort)
 
@@ -498,7 +498,11 @@ func runModel(modelName string, fast, bench bool, ctxSize int, reset bool, llama
 	color.Green("  │  %s%s│\n", readyText, strings.Repeat(" ", pad))
 
 	// 第二行：API 地址
-	apiText := fmt.Sprintf("API: http://127.0.0.1:%d/v1/chat/completions", cfg.ProxyPort)
+	apiHost := host
+	if apiHost == "" || apiHost == "0.0.0.0" {
+		apiHost = "127.0.0.1" // 显示时用 127.0.0.1，但实际监听 0.0.0.0
+	}
+	apiText := fmt.Sprintf("API: http://%s:%d/v1/chat/completions", apiHost, cfg.ProxyPort)
 	apiWidth := displayWidth(apiText)
 	pad2 := boxWidth - apiWidth
 	if pad2 < 1 {

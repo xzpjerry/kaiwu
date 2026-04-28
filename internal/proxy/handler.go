@@ -14,6 +14,7 @@ import (
 // Server is the Kaiwu proxy server
 type Server struct {
 	listenPort  int
+	listenHost  string // 监听地址，默认 127.0.0.1，用 0.0.0.0 开放局域网
 	backendPort int
 	modelAlias  string // llama-server 的 model alias
 	proxy       *httputil.ReverseProxy
@@ -25,7 +26,10 @@ type Server struct {
 }
 
 // NewServer creates a new proxy server
-func NewServer(listenPort, backendPort int, modelAlias string) *Server {
+func NewServer(listenPort, backendPort int, modelAlias string, host string) *Server {
+	if host == "" {
+		host = "127.0.0.1"
+	}
 	target, _ := url.Parse(fmt.Sprintf("http://127.0.0.1:%d", backendPort))
 
 	proxy := httputil.NewSingleHostReverseProxy(target)
@@ -33,6 +37,7 @@ func NewServer(listenPort, backendPort int, modelAlias string) *Server {
 
 	s := &Server{
 		listenPort:  listenPort,
+		listenHost:  host,
 		backendPort: backendPort,
 		modelAlias:  modelAlias,
 		proxy:       proxy,
@@ -60,7 +65,7 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/health", s.handleTransparent)
 
 	s.server = &http.Server{
-		Addr:    fmt.Sprintf("127.0.0.1:%d", s.listenPort),
+		Addr:    fmt.Sprintf("%s:%d", s.listenHost, s.listenPort),
 		Handler: mux,
 	}
 
