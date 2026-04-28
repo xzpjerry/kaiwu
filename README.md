@@ -164,6 +164,13 @@ CPU-only inference is supported but not the focus.
 
 ## Changelog
 
+### v0.2.9 — moe_partial + -sm graph detection + LD_LIBRARY_PATH
+- New `moe_partial` mode: calculates `--n-cpu-moe N` based on VRAM, keeping as many expert layers on GPU as possible. Enables running 120B MoE models on 8GB VRAM
+- `-sm graph` now runtime-detected: falls back to `--tensor-split` if binary doesn't support it. Prevents process exit from being misidentified as OOM
+- `isLikelyOOM` excludes parameter errors and timeouts from OOM detection
+- Linux: sets `LD_LIBRARY_PATH` to binary directory, fixing `libmtmd.so.0 not found`
+- `buildArgs`/`BuildArgs` signature includes `binaryPath` for correct graph split detection
+
 ### v0.2.8 — Three-mode selection + relative threshold (no more hardcoded 20 tok/s)
 - Warmup no longer filters by a fixed 18 tok/s threshold. Instead, collects all successful probe data points and derives three modes:
   - Speed: fastest ctx (smallest ctx, highest tok/s)
@@ -419,6 +426,13 @@ kaiwu inject
 
 ### v0.2.3 — 修复 Blackwell 启动超时被误判为 OOM
 - RTX 50 系启动超时（90s）不够 PTX JIT 编译（~60s），超时错误被 `isLikelyOOM()` 捕获 → ctx 减半重试循环 → 三次全失败。Blackwell 现在 180s 超时，错误信息与 OOM 区分开
+
+### v0.2.9 — moe_partial + -sm graph 检测 + LD_LIBRARY_PATH
+- 新增 `moe_partial` 模式：根据 VRAM 计算 `--n-cpu-moe N`，只把超出显存的 expert 层放 CPU，其余留 GPU。8GB 卡可跑 120B MoE 模型
+- `-sm graph` 改为运行时检测：binary 不支持时自动降级到 `--tensor-split`，不再因参数错误导致进程退出被误判 OOM
+- `isLikelyOOM` 排除参数错误和超时，不再触发错误的 ctx 减半重试
+- Linux 启动时设 `LD_LIBRARY_PATH` 到 binary 目录，修复 `libmtmd.so.0 not found`
+- `buildArgs`/`BuildArgs` 签名加 `binaryPath` 参数，graph split 检测用正确的 binary
 
 ### v0.2.8 — 三档模式选择 + 相对阈值（不再写死 20 tok/s）
 - Warmup 不再用固定 18 tok/s 阈值过滤。改为收集所有成功的 probe 数据点，探测结束后推导三档：
