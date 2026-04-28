@@ -39,8 +39,7 @@ func bytesPerKVType(kvType string) float64 {
 // Use full vramMB as baseline — llama.cpp will carve out model weights itself.
 func (p *DeployProfile) SelectKVCacheType(vramMB int, ctxSize int) (k, v string) {
 	var freeAfterModel int
-	if p.Mode == "moe_offload" {
-		// MoE offload: expert layers live in CPU RAM, only attention layers stay on GPU.
+	if p.Mode == "moe_offload" || p.Mode == "moe_partial" {
 		// Attention VRAM ≈ total_size * 0.30 (Qwen3-MoE ~28/94 layers, Mixtral ~0.25).
 		// Minimum floor 1024MB for small models.
 		attentionVRAM := int(p.Size_GB * 1024 * 0.30)

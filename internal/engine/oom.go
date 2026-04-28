@@ -25,7 +25,7 @@ func PreflightCheck(profile *model.DeployProfile, hw *hardware.HardwareProbe) er
 			profile.Size_GB, totalAvailGB)
 	}
 
-	if profile.Mode == "moe_offload" {
+	if profile.Mode == "moe_offload" || profile.Mode == "moe_partial" {
 		checkRAMForOffload(profile, hw)
 	}
 

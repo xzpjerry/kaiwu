@@ -22,10 +22,12 @@ type DeployProfile struct {
 	HFRepo       string
 	HFFile       string
 	Size_GB      float64
-	Mode         string // "full_gpu" or "moe_offload"
+	Mode         string // "full_gpu", "moe_partial", or "moe_offload"
+	NCpuMoe      int    // for moe_partial: number of expert layers on CPU (0 = auto-calculate)
 	OTFlags      string
 	StopTokens   []string
 	Layers       int
+	ExpertsTotal int  // total number of expert layers in the model
 	KVHeads      int  // GQA kv_heads 数量，用于 KV cache 精确计算
 	HeadDim      int  // attention head dimension（通常 128）
 	EmbeddingDim int  // embedding dimension（hidden_size）
@@ -43,17 +45,18 @@ func Match(model *ModelDef, hw *hardware.HardwareProbe) (*DeployProfile, error) 
 	ramGB := float64(hw.RAM.Total_MB) / 1024.0
 
 	profile := &DeployProfile{
-		ModelID:     model.ID,
-		DisplayName: model.DisplayName,
-		Family:      model.Family,
-		Arch:        model.Arch,
-		NativeMTP:   model.NativeMTP,
-		IsHybrid:    model.IsHybrid,
-		StopTokens:  model.StopTokens,
-		Layers:      model.Layers,
-		KVHeads:     model.KVHeads,
-		HeadDim:     model.HeadDim,
-		HasIsoQuant: !model.IsHybrid, // iso3 breaks on hybrid architectures (DeltaNet layers have no KV cache)
+		ModelID:      model.ID,
+		DisplayName:  model.DisplayName,
+		Family:       model.Family,
+		Arch:         model.Arch,
+		NativeMTP:    model.NativeMTP,
+		IsHybrid:     model.IsHybrid,
+		StopTokens:   model.StopTokens,
+		Layers:       model.Layers,
+		ExpertsTotal: model.ExpertsTotal,
+		KVHeads:      model.KVHeads,
+		HeadDim:      model.HeadDim,
+		HasIsoQuant:  !model.IsHybrid, // iso3 breaks on hybrid architectures (DeltaNet layers have no KV cache)
 	}
 
 	// Strategy 1: Full GPU — all layers in VRAM
@@ -103,8 +106,9 @@ func Match(model *ModelDef, hw *hardware.HardwareProbe) (*DeployProfile, error) 
 			profile.HFRepo = best.HFRepo
 			profile.HFFile = best.HFFile
 			profile.Size_GB = best.Size_GB
-			profile.Mode = "moe_offload"
 			profile.OTFlags = model.MoeOffloadTemplate
+			// Calculate moe_partial vs moe_offload
+			profile.Mode, profile.NCpuMoe = calcMoEMode(profile, hw)
 			enrichFromGGUF(profile)
 			return profile, nil
 		}
@@ -141,8 +145,9 @@ func Match(model *ModelDef, hw *hardware.HardwareProbe) (*DeployProfile, error) 
 		profile.HFRepo = best.HFRepo
 		profile.HFFile = best.HFFile
 		profile.Size_GB = best.Size_GB
-		profile.Mode = "moe_offload"
 		profile.OTFlags = model.MoeOffloadTemplate
+		// Calculate moe_partial vs moe_offload
+		profile.Mode, profile.NCpuMoe = calcMoEMode(profile, hw)
 		enrichFromGGUF(profile)
 		return profile, nil
 	}
@@ -298,4 +303,47 @@ func enrichFromGGUF(profile *DeployProfile) {
 		profile.IsHybrid = true
 		profile.HasIsoQuant = false
 	}
+}
+
+// calcMoEMode determines whether to use moe_partial or moe_offload based on VRAM.
+// Returns (mode, nCpuMoe).
+// moe_partial: some expert layers on GPU, rest on CPU (--n-cpu-moe N)
+// moe_offload: all expert layers on CPU (--cpu-moe)
+func calcMoEMode(profile *DeployProfile, hw *hardware.HardwareProbe) (string, int) {
+	if profile.ExpertsTotal <= 0 || profile.Layers <= 0 {
+		return "moe_offload", 0 // can't calculate, fall back to full offload
+	}
+
+	vramMB := hw.TotalVRAM_MB()
+
+	// Attention layers ≈ 25% of model size
+	attentionMB := int(profile.Size_GB * 1024 * 0.25)
+	overheadMB := 1024 // compute buffer, activations, etc.
+
+	// Expert layers ≈ 75% of model size
+	expertTotalMB := int(profile.Size_GB * 1024 * 0.75)
+	perExpertLayerMB := expertTotalMB / profile.ExpertsTotal
+
+	if perExpertLayerMB <= 0 {
+		return "moe_offload", 0
+	}
+
+	// How many expert layers can fit in remaining VRAM after attention + overhead
+	vramForExperts := vramMB - attentionMB - overheadMB
+	if vramForExperts <= 0 {
+		return "moe_offload", 0 // not even attention fits comfortably
+	}
+
+	gpuExpertLayers := vramForExperts / perExpertLayerMB
+	if gpuExpertLayers >= profile.ExpertsTotal {
+		// All experts fit → full_gpu (caller should have caught this, but safety check)
+		return "full_gpu", 0
+	}
+
+	nCpuMoe := profile.ExpertsTotal - gpuExpertLayers
+	if nCpuMoe >= profile.ExpertsTotal {
+		return "moe_offload", 0 // all on CPU
+	}
+
+	return "moe_partial", nCpuMoe
 }

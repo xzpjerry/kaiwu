@@ -181,8 +181,11 @@ func Warmup(profile *model.DeployProfile, binaryPath, modelPath string, hw *hard
 	}
 
 	batchSize, ubatchSize := 512, 128
-	if profile.Mode == "moe_offload" {
+	if profile.Mode == "moe_offload" || profile.Mode == "moe_partial" {
 		batchSize, ubatchSize = 4096, 512
+		if profile.Mode == "moe_partial" {
+			ubatchSize = 4096 // community-tested: -ub 4096 improves prompt processing for partial offload
+		}
 	}
 
 	// Phase 1 now collects ALL successful probes (no threshold filtering).
@@ -220,7 +223,7 @@ func Warmup(profile *model.DeployProfile, binaryPath, modelPath string, hw *hard
 		//   full_gpu:     IdealStartCtx×2 (oobabooga formula + 1 step headroom)
 		//   moe_offload:  nativeMax (formula wrong for MoE, GPU only has KV cache)
 		var startCtx int
-		if profile.Mode == "moe_offload" {
+		if profile.Mode == "moe_offload" || profile.Mode == "moe_partial" {
 			startCtx = nativeMax
 		} else {
 			ideal := engine.IdealStartCtx(profile, hw)
@@ -322,9 +325,9 @@ func Warmup(profile *model.DeployProfile, binaryPath, modelPath string, hw *hard
 		return nil, fmt.Errorf("all ctx probes failed (tried down to 4K)")
 	}
 
-	// MoE offload: warmup 后把实测 VRAM 回写到 profile。
+	// MoE: warmup 后把实测 VRAM 回写到 profile。
 	// SelectKVCacheType 下次调用时会用这个值代替估算值，更准确。
-	if profile.Mode == "moe_offload" && bestVRAM > 0 {
+	if (profile.Mode == "moe_offload" || profile.Mode == "moe_partial") && bestVRAM > 0 {
 		profile.MeasuredVRAM_MB = bestVRAM
 	}
 
@@ -362,7 +365,7 @@ func Warmup(profile *model.DeployProfile, binaryPath, modelPath string, hw *hard
 	}
 
 	fmt.Printf("      ✓ %.1f tok/s @ %s ctx\n", bestTPS, fmtCtx(bestCtx))
-	if profile.Mode == "moe_offload" {
+	if profile.Mode == "moe_offload" || profile.Mode == "moe_partial" {
 		fmt.Printf("      ℹ MoE offload · speed limited by PCIe bandwidth, not context size\n")
 	}
 
@@ -370,7 +373,7 @@ func Warmup(profile *model.DeployProfile, binaryPath, modelPath string, hw *hard
 	modes := deriveModeProfiles(probeResults, profile, modelPath, port, hw, batchSize, ubatchSize)
 
 	// MoE or only one distinct ctx → skip selection, use context mode
-	if profile.Mode == "moe_offload" || len(modes) <= 1 {
+	if profile.Mode == "moe_offload" || profile.Mode == "moe_partial" || len(modes) <= 1 {
 		if len(modes) == 0 {
 			modes = []ModeProfile{{Priority: "balanced", CtxSize: bestCtx, TPS: bestTPS, Args: bestArgs}}
 		}
@@ -471,11 +474,14 @@ func BuildArgs(profile *model.DeployProfile, modelPath string, port int, hw *har
 		args = append(args, "--kv-unified")
 	}
 
-	// MoE offload: keep expert layers on CPU, only attention/shared layers on GPU.
-	// --cpu-moe is more reliable than -ot regex.
+	// MoE offload modes:
+	// moe_offload: all expert layers on CPU (--cpu-moe)
+	// moe_partial: some expert layers on CPU (--n-cpu-moe N), rest on GPU
 	// Keep --fit on so llama.cpp does the final precise layer allocation.
 	if profile.Mode == "moe_offload" {
 		args = append(args, "--cpu-moe")
+	} else if profile.Mode == "moe_partial" && profile.NCpuMoe > 0 {
+		args = append(args, "--n-cpu-moe", strconv.Itoa(profile.NCpuMoe))
 	}
 	args = append(args, "--fit", "on")
 
@@ -706,9 +712,9 @@ func saveProfile(profile *OptimizedProfile, path string) error {
 
 // threadsForMode returns the optimal thread count based on inference mode.
 // full_gpu: GPU does all the work, CPU just orchestrates — 2 threads suffice.
-// moe_offload: CPU handles expert layers, needs real parallelism.
+// moe_offload/moe_partial: CPU handles expert layers, needs real parallelism.
 func threadsForMode(mode string, hw *hardware.HardwareProbe) int {
-	if mode == "moe_offload" {
+	if mode == "moe_offload" || mode == "moe_partial" {
 		t := hw.CPU.Cores / 2
 		if t < 4 {
 			t = 4
@@ -730,7 +736,7 @@ func checkRAMSafety(hw *hardware.HardwareProbe, profile *model.DeployProfile) st
 	}
 
 	var modelRAM_MB uint64
-	if profile.Mode == "moe_offload" {
+	if profile.Mode == "moe_offload" || profile.Mode == "moe_partial" {
 		modelRAM_MB = uint64(profile.Size_GB * 1024 * 0.9)
 	} else {
 		modelRAM_MB = uint64(profile.Size_GB * 1024 * 0.1)

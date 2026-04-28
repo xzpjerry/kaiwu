@@ -358,13 +358,18 @@ func buildArgs(profile *model.DeployProfile, modelPath string, port int, hw *har
 		args = append(args, "--mmap")
 	}
 
-	// MoE offload: keep expert layers on CPU, only attention/shared layers on GPU.
-	// --cpu-moe is more reliable than -ot regex.
-	// --fit on lets llama.cpp handle layer allocation for both modes.
+	// MoE offload modes:
+	// moe_offload: all expert layers on CPU (--cpu-moe)
+	// moe_partial: some expert layers on CPU (--n-cpu-moe N), rest on GPU for better speed
+	// --fit on lets llama.cpp handle layer allocation for all modes.
 	if profile.Mode == "moe_offload" {
 		args = append(args, "--cpu-moe")
 		args = append(args, "--batch-size", "4096")
 		args = append(args, "--ubatch-size", "512")
+	} else if profile.Mode == "moe_partial" && profile.NCpuMoe > 0 {
+		args = append(args, "--n-cpu-moe", strconv.Itoa(profile.NCpuMoe))
+		args = append(args, "--batch-size", "4096")
+		args = append(args, "--ubatch-size", "4096")
 	} else {
 		args = append(args, "--batch-size", "512")
 		// 小模型（<2GB）用小 ubatch，避免 --kv-unified 预分配过多 VRAM
@@ -394,7 +399,7 @@ func buildArgs(profile *model.DeployProfile, modelPath string, port int, hw *har
 	return args
 }
 func threadsForMode(mode string, hw *hardware.HardwareProbe) int {
-	if mode == "moe_offload" {
+	if mode == "moe_offload" || mode == "moe_partial" {
 		t := hw.CPU.Cores / 2
 		if t < 4 {
 			t = 4
@@ -424,7 +429,7 @@ func shouldMlockEngine(hw *hardware.HardwareProbe, profile *model.DeployProfile)
 		return false
 	}
 	var modelRAM_MB float64
-	if profile.Mode == "moe_offload" {
+	if profile.Mode == "moe_offload" || profile.Mode == "moe_partial" {
 		modelRAM_MB = profile.Size_GB * 1024 * 0.9
 	} else {
 		modelRAM_MB = profile.Size_GB * 1024 * 0.1
