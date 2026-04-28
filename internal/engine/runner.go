@@ -109,7 +109,7 @@ func startOnce(profile *model.DeployProfile, binaryPath, modelPath string, hw *h
 		fmt.Printf("Port %d in use, using %d instead\n", cfg.LlamaPort, actualPort)
 	}
 
-	args := buildArgs(profile, modelPath, actualPort, hw, ctxSize, host)
+	args := buildArgs(profile, binaryPath, modelPath, actualPort, hw, ctxSize, host)
 	return launchProcess(profile, binaryPath, args, actualPort, hw.ClusterCaps().HasBlackwell)
 }
 
@@ -192,6 +192,17 @@ func launchProcess(profile *model.DeployProfile, binaryPath string, args []strin
 // isLikelyOOM 判断启动失败是否可能是 OOM
 func isLikelyOOM(err error) bool {
 	msg := err.Error()
+	// Parameter errors: binary doesn't support the flag, not OOM
+	if strings.Contains(msg, "invalid value") ||
+		strings.Contains(msg, "error while handling argument") ||
+		strings.Contains(msg, "unknown argument") ||
+		strings.Contains(msg, "unrecognized option") {
+		return false
+	}
+	// Timeout: not OOM (JIT compilation, slow load, etc.)
+	if strings.Contains(msg, "startup timeout") {
+		return false
+	}
 	return strings.Contains(msg, "exited during startup") ||
 		strings.Contains(msg, "CUDA out of memory") ||
 		strings.Contains(msg, "ggml_cuda") ||
@@ -291,7 +302,7 @@ func Status() (*RunningEngine, error) {
 // buildArgs constructs llama-server command-line arguments
 // This is the fallback path when warmup cache is unavailable.
 // Logic mirrors optimizer.BuildArgs to keep parameters consistent.
-func buildArgs(profile *model.DeployProfile, modelPath string, port int, hw *hardware.HardwareProbe, ctxSize int, host string) []string {
+func buildArgs(profile *model.DeployProfile, binaryPath, modelPath string, port int, hw *hardware.HardwareProbe, ctxSize int, host string) []string {
 	vramMB := hw.TotalVRAM_MB() // 多卡总VRAM
 
 	threads := threadsForMode(profile.Mode, hw)
@@ -334,9 +345,9 @@ func buildArgs(profile *model.DeployProfile, modelPath string, port int, hw *har
 		args = append(args, "--flash-attn", "on")
 	}
 
-	// Multi-GPU: NVLink → graph split mode; otherwise → weighted tensor-split
+	// Multi-GPU: NVLink + graph support → graph split mode; otherwise → weighted tensor-split
 	if hw.GPUCount() > 1 {
-		if hw.HasNVLink() {
+		if hw.HasNVLink() && SupportsGraphSplit(binaryPath) {
 			args = append(args, "-sm", "graph")
 		} else if ts := hw.TensorSplitArg(); ts != "" {
 			args = append(args, "--tensor-split", ts)

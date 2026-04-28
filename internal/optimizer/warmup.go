@@ -207,7 +207,7 @@ func Warmup(profile *model.DeployProfile, binaryPath, modelPath string, hw *hard
 			ctxFixed = profile.NativeCtx
 		}
 		fmt.Printf("      User override: ctx=%s ... ", fmtCtx(ctxFixed))
-		args := BuildArgs(profile, modelPath, port, hw, ctxFixed, batchSize, ubatchSize)
+		args := BuildArgs(profile, binaryPath, modelPath, port, hw, ctxFixed, batchSize, ubatchSize)
 		tps, vram, err := runBenchmarkRound(binaryPath, args, port)
 		if err != nil {
 			return nil, fmt.Errorf("user-specified ctx=%s failed to start (OOM?)", fmtCtx(ctxFixed))
@@ -245,7 +245,7 @@ func Warmup(profile *model.DeployProfile, binaryPath, modelPath string, hw *hard
 		ctxTry := startCtx
 		for attempt := 1; attempt <= 8; attempt++ {
 			fmt.Printf("      Probe %d: ctx=%s ... ", attempt, fmtCtx(ctxTry))
-			args := BuildArgs(profile, modelPath, port, hw, ctxTry, batchSize, ubatchSize)
+			args := BuildArgs(profile, binaryPath, modelPath, port, hw, ctxTry, batchSize, ubatchSize)
 			tps, vram, err := runBenchmarkRound(binaryPath, args, port)
 
 			if err != nil {
@@ -302,7 +302,7 @@ func Warmup(profile *model.DeployProfile, binaryPath, modelPath string, hw *hard
 					break
 				}
 				fmt.Printf("      Fine: ctx=%s ... ", fmtCtx(mid))
-				args := BuildArgs(profile, modelPath, port, hw, mid, batchSize, ubatchSize)
+				args := BuildArgs(profile, binaryPath, modelPath, port, hw, mid, batchSize, ubatchSize)
 				tps, vram, err := runBenchmarkRound(binaryPath, args, port)
 				if err != nil {
 					fmt.Printf("OOM\n")
@@ -343,7 +343,7 @@ func Warmup(profile *model.DeployProfile, binaryPath, modelPath string, hw *hard
 	var ubBestVRAM int
 	fmt.Printf("      Tune ubatch: ")
 	for _, ub := range ubatchCandidates {
-		args2 := BuildArgs(profile, modelPath, port, hw, bestCtx, 512, ub)
+		args2 := BuildArgs(profile, binaryPath, modelPath, port, hw, bestCtx, 512, ub)
 		tps2, vram2, err := runBenchmarkRound(binaryPath, args2, port)
 		if err != nil {
 			fmt.Printf("ub=%d failed; ", ub)
@@ -434,7 +434,7 @@ func alignToPow2(n int) int {
 }
 
 // BuildArgs constructs llama-server arguments with explicit ctx size and batch sizes.
-func BuildArgs(profile *model.DeployProfile, modelPath string, port int, hw *hardware.HardwareProbe, ctxSize, batchSize, ubatchSize int) []string {
+func BuildArgs(profile *model.DeployProfile, binaryPath, modelPath string, port int, hw *hardware.HardwareProbe, ctxSize, batchSize, ubatchSize int) []string {
 	vramMB := hw.TotalVRAM_MB() // 多卡总VRAM
 
 	// KV cache 类型：基于 VRAM 计算自动选择最快的类型
@@ -490,9 +490,9 @@ func BuildArgs(profile *model.DeployProfile, modelPath string, port int, hw *har
 		args = append(args, "--flash-attn", "on")
 	}
 
-	// Multi-GPU: NVLink → graph split mode; otherwise → weighted tensor-split
+	// Multi-GPU: NVLink + graph support → graph split mode; otherwise → weighted tensor-split
 	if hw.GPUCount() > 1 {
-		if hw.HasNVLink() {
+		if hw.HasNVLink() && engine.SupportsGraphSplit(binaryPath) {
 			args = append(args, "-sm", "graph")
 		} else if ts := hw.TensorSplitArg(); ts != "" {
 			args = append(args, "--tensor-split", ts)

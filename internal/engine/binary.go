@@ -4,6 +4,7 @@ import (
 	"archive/tar"
 	"archive/zip"
 	"compress/gzip"
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -11,6 +12,8 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/val1813/kaiwu/internal/config"
 	"github.com/val1813/kaiwu/internal/download"
@@ -289,6 +292,23 @@ func extractFromTarGz(archivePath, destPath string) error {
 // Two conditions: (1) SM >= 80 (Ampere+), (2) binary is turboquant build.
 func ShouldUseIso3(isTurboQuant bool, sm int) bool {
 	return isTurboQuant && sm >= 80
+}
+
+// SupportsGraphSplit checks if the binary supports -sm graph (turboquant fork feature).
+// Thread-safe, only runs --help once per session via sync.Once.
+var (
+	graphSplitOnce   sync.Once
+	graphSplitResult bool
+)
+
+func SupportsGraphSplit(binaryPath string) bool {
+	graphSplitOnce.Do(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		out, err := exec.CommandContext(ctx, binaryPath, "--help").CombinedOutput()
+		graphSplitResult = err == nil && strings.Contains(string(out), "graph")
+	})
+	return graphSplitResult
 }
 
 // ValidateCUDAVersion checks for known CUDA driver issues
