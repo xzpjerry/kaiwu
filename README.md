@@ -164,6 +164,12 @@ CPU-only inference is supported but not the focus.
 
 ## Changelog
 
+### v0.3.1 — MoE OOM root cause fix (--fit conflicts with --cpu-moe)
+- `--fit on` cannot be combined with `--cpu-moe`/`--n-cpu-moe`（ik_llama.cpp docs）. Previous versions passed both, causing --fit to override MoE layer placement → OOM. Now only `full_gpu` uses `--fit on`; MoE modes use `-ngl 999` + explicit offload flags
+- `calcMoEMode` overhead: 1GB → 2.5GB (reserves KV cache + compute buffer space)
+- MoE + multi-GPU: skip `-sm graph`, use layer split + `GGML_CUDA_DISABLE_GRAPHS=1`
+- `isLikelyOOM` excludes missing .so errors
+
 ### v0.2.9 — moe_partial + -sm graph detection + LD_LIBRARY_PATH
 - New `moe_partial` mode: calculates `--n-cpu-moe N` based on VRAM, keeping as many expert layers on GPU as possible. Enables running 120B MoE models on 8GB VRAM
 - `-sm graph` now runtime-detected: falls back to `--tensor-split` if binary doesn't support it. Prevents process exit from being misidentified as OOM
@@ -426,6 +432,12 @@ kaiwu inject
 
 ### v0.2.3 — 修复 Blackwell 启动超时被误判为 OOM
 - RTX 50 系启动超时（90s）不够 PTX JIT 编译（~60s），超时错误被 `isLikelyOOM()` 捕获 → ctx 减半重试循环 → 三次全失败。Blackwell 现在 180s 超时，错误信息与 OOM 区分开
+
+### v0.3.1 — MoE OOM 根因修复（--fit 与 --cpu-moe 冲突）
+- `--fit on` 不能和 `--cpu-moe`/`--n-cpu-moe` 同时使用（ik_llama.cpp 文档明确说明）。之前所有版本都同时传了两个，`--fit` 覆盖了 MoE 层分配 → OOM。现在只有 `full_gpu` 用 `--fit on`，MoE 模式用 `-ngl 999` + 显式 offload 参数
+- `calcMoEMode` overhead 从 1GB 增加到 2.5GB（预留 KV cache + compute buffer 空间）
+- MoE + 多卡：跳过 `-sm graph`，用 layer split + `GGML_CUDA_DISABLE_GRAPHS=1`
+- `isLikelyOOM` 排除 .so 缺失错误
 
 ### v0.2.9 — moe_partial + -sm graph 检测 + LD_LIBRARY_PATH
 - 新增 `moe_partial` 模式：根据 VRAM 计算 `--n-cpu-moe N`，只把超出显存的 expert 层放 CPU，其余留 GPU。8GB 卡可跑 120B MoE 模型
