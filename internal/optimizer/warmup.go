@@ -477,13 +477,15 @@ func BuildArgs(profile *model.DeployProfile, binaryPath, modelPath string, port 
 	// MoE offload modes:
 	// moe_offload: all expert layers on CPU (--cpu-moe)
 	// moe_partial: some expert layers on CPU (--n-cpu-moe N), rest on GPU
-	// Keep --fit on so llama.cpp does the final precise layer allocation.
+	// --fit on CANNOT be combined with --cpu-moe or --n-cpu-moe (ik_llama.cpp docs).
+	// Only use --fit on for full_gpu (dense) models.
 	if profile.Mode == "moe_offload" {
 		args = append(args, "--cpu-moe")
 	} else if profile.Mode == "moe_partial" && profile.NCpuMoe > 0 {
 		args = append(args, "--n-cpu-moe", strconv.Itoa(profile.NCpuMoe))
+	} else {
+		args = append(args, "--fit", "on")
 	}
-	args = append(args, "--fit", "on")
 
 	// Flash Attention: SM75+ (Turing and newer)
 	if hw.SupportsFlashAttn() {

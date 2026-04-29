@@ -401,9 +401,8 @@ func buildArgs(profile *model.DeployProfile, binaryPath, modelPath string, port 
 	}
 
 	// MoE offload modes:
-	// moe_offload: all expert layers on CPU (--cpu-moe)
-	// moe_partial: some expert layers on CPU (--n-cpu-moe N), rest on GPU for better speed
-	// --fit on lets llama.cpp handle layer allocation for all modes.
+	// --fit on CANNOT be combined with --cpu-moe or --n-cpu-moe (ik_llama.cpp docs).
+	// MoE modes use -ngl 999 (already in args) to put all non-expert layers on GPU.
 	if profile.Mode == "moe_offload" {
 		args = append(args, "--cpu-moe")
 		args = append(args, "--batch-size", "4096")
@@ -413,6 +412,8 @@ func buildArgs(profile *model.DeployProfile, binaryPath, modelPath string, port 
 		args = append(args, "--batch-size", "4096")
 		args = append(args, "--ubatch-size", "4096")
 	} else {
+		// full_gpu: --fit on for automatic layer allocation
+		args = append(args, "--fit", "on")
 		args = append(args, "--batch-size", "512")
 		// 小模型（<2GB）用小 ubatch，避免 --kv-unified 预分配过多 VRAM
 		ubatch := 512
@@ -421,7 +422,6 @@ func buildArgs(profile *model.DeployProfile, binaryPath, modelPath string, port 
 		}
 		args = append(args, "--ubatch-size", strconv.Itoa(ubatch))
 	}
-	args = append(args, "--fit", "on")
 
 	// MTP speculative decoding: Qwen3.6 models have native MTP heads, 40-80% speed boost
 	if profile.NativeMTP {

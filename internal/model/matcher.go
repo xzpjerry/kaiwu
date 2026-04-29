@@ -318,7 +318,9 @@ func calcMoEMode(profile *DeployProfile, hw *hardware.HardwareProbe) (string, in
 
 	// Attention layers ≈ 25% of model size
 	attentionMB := int(profile.Size_GB * 1024 * 0.25)
-	overheadMB := 1024 // compute buffer, activations, etc.
+	// Reserve for KV cache (at least 8K ctx) + compute buffer + activations
+	// KV cache at 8K ctx ≈ 500-1500MB depending on model, compute buffer ≈ 500-1000MB
+	overheadMB := 2560 // 2.5GB: enough for 8K-32K ctx KV cache + compute buffer
 
 	// Expert layers ≈ 75% of model size
 	expertTotalMB := int(profile.Size_GB * 1024 * 0.75)
