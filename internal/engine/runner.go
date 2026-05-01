@@ -424,13 +424,13 @@ func buildArgs(profile *model.DeployProfile, binaryPath, modelPath string, port 
 	}
 
 	// MTP speculative decoding: Qwen3.6 models have native MTP heads, 40-80% speed boost
-	if profile.NativeMTP {
+	if profile.NativeMTP && SupportsFlag(binaryPath, "--num-speculative-tokens") {
 		args = append(args, "--num-speculative-tokens", "3")
 	}
 
 	// N-gram lookup: zero-cost speculative decoding for models without MTP
 	// 20-50% speedup on code/structured output (high repetition patterns)
-	if !profile.NativeMTP {
+	if !profile.NativeMTP && SupportsFlag(binaryPath, "--lookup") {
 		args = append(args, "--lookup", "8")
 	}
 

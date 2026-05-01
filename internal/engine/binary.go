@@ -299,6 +299,8 @@ func ShouldUseIso3(isTurboQuant bool, sm int) bool {
 var (
 	graphSplitOnce   sync.Once
 	graphSplitResult bool
+	helpFlagMu       sync.Mutex
+	helpFlagCache    = make(map[string]bool)
 )
 
 func SupportsGraphSplit(binaryPath string) bool {
@@ -309,6 +311,37 @@ func SupportsGraphSplit(binaryPath string) bool {
 		graphSplitResult = err == nil && strings.Contains(string(out), "graph")
 	})
 	return graphSplitResult
+}
+
+// SupportsFlag checks whether a llama-server binary advertises a CLI flag.
+func SupportsFlag(binaryPath, flag string) bool {
+	key := binaryPath + "\x00" + flag
+
+	helpFlagMu.Lock()
+	if supported, ok := helpFlagCache[key]; ok {
+		helpFlagMu.Unlock()
+		return supported
+	}
+	helpFlagMu.Unlock()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, binaryPath, "--help").CombinedOutput()
+	supported := err == nil && helpContainsFlag(string(out), flag)
+
+	helpFlagMu.Lock()
+	helpFlagCache[key] = supported
+	helpFlagMu.Unlock()
+	return supported
+}
+
+func helpContainsFlag(help, flag string) bool {
+	for _, field := range strings.Fields(help) {
+		if strings.Trim(field, " ,;") == flag {
+			return true
+		}
+	}
+	return false
 }
 
 // ValidateCUDAVersion checks for known CUDA driver issues
